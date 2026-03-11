@@ -1,19 +1,70 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import pdfjsWorker from "pdfjs-dist/build/pdf.worker?url";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+// Use the CDN worker that matches the installed pdfjs-dist version.
+// The ?url / local worker import breaks on Netlify and some Vite builds.
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
-// ─── Colours ────────────────────────────────────────────────────────────────
-const GREEN  = "#00e676";
-const RED    = "#ff4560";
-const DIM    = "#6b7f96";
-const BG     = "#080d14";
-const CARD   = "#0e1520";
-const BORDER = "#1a2535";
-const TEXT   = "#e2eaf6";
+// ─── Colour helpers (read from CSS custom properties at runtime) ─────────────
+// These are used for JS-only computations (col(), pill(), changeBadge()).
+// The actual rendered colours come from CSS vars — these just mirror them.
+const GREEN  = "#00c853";
+const RED    = "#f5222d";
+const DIM    = "#8c9bb0";
 const ACCENT = "#2d7ff9";
-const GOLD   = "#f5a623";
+
+function col(v) { return v > 0 ? GREEN : v < 0 ? RED : DIM; }
+
+// ─── Theme tokens ─────────────────────────────────────────────────────────────
+// All colours live in CSS custom properties. Toggling body.light switches theme.
+const THEME_CSS = `
+  /* ── Dark theme (default) ── */
+  :root {
+    --clr-green       : #00c853;
+    --clr-red         : #f5222d;
+    --clr-dim         : #8c9bb0;
+    --clr-bg          : #080d14;
+    --clr-card        : #0e1520;
+    --clr-card-alt    : #0c1422;
+    --clr-border      : #1a2535;
+    --clr-text        : #e2eaf6;
+    --clr-accent      : #2d7ff9;
+    --clr-gold        : #f5a623;
+    --clr-avatar-bg   : #131f30;
+    --clr-input-bg    : #060b12;
+    --clr-hero-grad   : linear-gradient(135deg,#0d1e3a,#091628);
+    --clr-live-grad   : linear-gradient(135deg,#0a2a1a,#0d3320);
+    --clr-export-grad : linear-gradient(135deg,#1a1500,#2a1f00);
+    --clr-notice-bg   : rgba(255,255,255,.03);
+    --clr-shadow      : rgba(0,0,0,.55);
+    --clr-sheet-shadow: rgba(0,0,0,.6);
+    --clr-fab-shadow  : rgba(45,127,249,.45);
+  }
+
+  /* ── Light theme ── */
+  body.light {
+    --clr-green       : #00963e;
+    --clr-red         : #d4000f;
+    --clr-dim         : #6b7c96;
+    --clr-bg          : #f0f4f8;
+    --clr-card        : #ffffff;
+    --clr-card-alt    : #f7fafc;
+    --clr-border      : #d1dae6;
+    --clr-text        : #0f1923;
+    --clr-accent      : #1a5fd4;
+    --clr-gold        : #b8620a;
+    --clr-avatar-bg   : #e4ecf6;
+    --clr-input-bg    : #eef2f7;
+    --clr-hero-grad   : linear-gradient(135deg,#ddeeff,#c8dcf5);
+    --clr-live-grad   : linear-gradient(135deg,#e6f9ee,#d0f0dc);
+    --clr-export-grad : linear-gradient(135deg,#fff8e6,#fef0c8);
+    --clr-notice-bg   : rgba(0,0,0,.03);
+    --clr-shadow      : rgba(0,0,0,.12);
+    --clr-sheet-shadow: rgba(0,0,0,.18);
+    --clr-fab-shadow  : rgba(26,95,212,.3);
+  }
+`;
 
 // ─── IndexedDB helpers ───────────────────────────────────────────────────────
 const DB_NAME = "gse-portfolio", DB_VERSION = 1, STORE = "portfolio";
@@ -53,7 +104,6 @@ function fmtGHS(v) {
   return `${v >= 0 ? "+" : "-"}GHS ${abs}`;
 }
 function fmtPct(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`; }
-function col(v)    { return v >= 0 ? GREEN : RED; }
 function safeFloat(str) {
   if (!str) return 0;
   const s = str.trim().replace(/,/g, "");
@@ -143,7 +193,7 @@ function triggerDownload(blob, filename) {
 //
 const GLOBAL_CSS = `
   *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: ${BG}; -webkit-text-size-adjust: 100%; }
+  html, body { margin: 0; padding: 0; background: var(--clr-bg); -webkit-text-size-adjust: 100%; transition: background 0.25s, color 0.25s; }
 
   :root {
     --gutter       : clamp(14px, 4.5vw, 24px);
@@ -170,15 +220,16 @@ const GLOBAL_CSS = `
     transform: translateX(-50%);
     width: 100%;
     max-width: min(100vw, 640px);
-    background: #0c1422;
+    background: var(--clr-card-alt);
     border-top-left-radius:  var(--radius-sheet);
     border-top-right-radius: var(--radius-sheet);
     padding: clamp(18px,5vw,28px) var(--gutter) max(env(safe-area-inset-bottom,20px), 36px);
     z-index: 40;
-    border: 1px solid ${BORDER};
-    box-shadow: 0 -8px 40px rgba(0,0,0,.6);
+    border: 1px solid var(--clr-border);
+    box-shadow: 0 -8px 40px var(--clr-sheet-shadow);
     max-height: 92dvh;
     overflow-y: auto;
+    color: var(--clr-text);
   }
 
   /* ── Section labels inside sheets ── */
@@ -190,13 +241,14 @@ const GLOBAL_CSS = `
     bottom: max(env(safe-area-inset-bottom,0px) + 18px, 22px);
     right:  max(env(safe-area-inset-right, 0px) + 18px, 18px);
     width:  var(--avatar-size);
+    height: var(--avatar-size);
     border-radius: 50%;
-    background: ${ACCENT};
+    background: var(--clr-accent);
     color: #fff;
     font-size: clamp(20px, 5vw, 26px);
     border: none; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 4px 24px rgba(45,127,249,.45);
+    box-shadow: 0 4px 24px var(--clr-fab-shadow);
     z-index: 20;
   }
 
@@ -204,16 +256,17 @@ const GLOBAL_CSS = `
   .section-label {
     padding: var(--gap-sm) var(--gutter) calc(var(--gap-sm) / 2);
     font-size: var(--fs-xs);
-    color: ${DIM};
+    color: var(--clr-dim);
     letter-spacing: 2.2px;
     text-transform: uppercase;
-    background: ${BG};
+    background: var(--clr-bg);
   }
 
   /* ── Top border for the holdings list ── */
   .holdings-list {
-    border-top: 1px solid ${BORDER};
-	width: 97vw;
+    border-top: 1px solid var(--clr-border);
+    width: 97vw;
+    max-width: 640px;
   }
 
   /* ── Stat row inside detail screen ── */
@@ -221,41 +274,41 @@ const GLOBAL_CSS = `
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid ${BORDER};
+    border-bottom: 1px solid var(--clr-border);
     padding: clamp(10px, 2.8vw, 14px) 0;
   }
-  .stat-label { color: ${DIM}; font-size: var(--fs-base); }
+  .stat-label { color: var(--clr-dim); font-size: var(--fs-base); }
   .stat-value { font-weight: 600; font-size: var(--fs-md); }
 
   /* ── Change mini-cards row (detail screen) ── */
   .change-cards {
     display: flex;
     gap: 0;
-    border-top: 1px solid ${BORDER};
-    border-bottom: 1px solid ${BORDER};
+    border-top: 1px solid var(--clr-border);
+    border-bottom: 1px solid var(--clr-border);
   }
   .change-card {
     flex: 1;
-    background: ${CARD};
+    background: var(--clr-card);
     padding: clamp(10px,2.8vw,14px) var(--gutter,18px);
-    border-right: 1px solid ${BORDER};
+    border-right: 1px solid var(--clr-border);
   }
   .change-card:last-child { border-right: none; }
-  .change-card-note { font-size: var(--fs-sm); color: ${DIM}; margin-top: 4px; }
+  .change-card-note { font-size: var(--fs-sm); color: var(--clr-dim); margin-top: 4px; }
 
   /* ── Day/YTD badge row inside stock card ── */
   .card-badges { display: flex; justify-content: space-between; align-items: center; }
   .badge-col   { display: flex; flex-direction: column; gap: 2px; }
   .badge-col-right { display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
-  .badge-micro { font-size: var(--fs-xs); color: ${DIM}; letter-spacing: 1.4px; text-transform: uppercase; }
+  .badge-micro { font-size: var(--fs-xs); color: var(--clr-dim); letter-spacing: 1.4px; text-transform: uppercase; }
 
   /* ── Export sheet hint text ── */
-  .sheet-hint { font-size: var(--fs-sm); color: ${DIM}; margin-top: 5px; }
+  .sheet-hint { font-size: var(--fs-sm); color: var(--clr-dim); margin-top: 5px; }
 
   /* ── Danger confirm box ── */
   .danger-box {
-    background: rgba(255,69,96,.06);
-    border: 1px solid rgba(255,69,96,.2);
+    background: rgba(245,34,45,.06);
+    border: 1px solid rgba(245,34,45,.2);
     border-radius: var(--radius-card);
     padding: var(--gap-md);
   }
@@ -272,25 +325,42 @@ const GLOBAL_CSS = `
   /* ── Error / info notice box ── */
   .notice-box {
     font-size: var(--fs-sm);
-    color: ${DIM};
+    color: var(--clr-dim);
     margin-top: 5px;
     padding: clamp(7px,2vw,10px) clamp(9px,2.5vw,12px);
-    background: rgba(255,255,255,.03);
+    background: var(--clr-notice-bg);
     border-radius: 8px;
-    border: 1px solid ${BORDER};
+    border: 1px solid var(--clr-border);
   }
 
+  /* ── Eye button ── */
   .eye-btn {
     background: none; border: none;
-    color: ${DIM};
+    color: var(--clr-dim);
     cursor: pointer; padding: 4px;
     display: flex; align-items: center;
     border-radius: 6px;
     transition: color 0.15s;
   }
-  .eye-btn:hover { color: ${TEXT}; }
+  .eye-btn:hover { color: var(--clr-text); }
+
+  /* ── Theme toggle button ── */
+  .theme-btn {
     background: none; border: none;
-    color: ${ACCENT};
+    color: var(--clr-dim);
+    cursor: pointer; padding: 4px;
+    display: flex; align-items: center;
+    border-radius: 6px;
+    font-size: clamp(14px,3.5vw,17px);
+    line-height: 1;
+    transition: color 0.15s, transform 0.2s;
+  }
+  .theme-btn:hover { color: var(--clr-text); transform: rotate(20deg); }
+
+  /* ── Back button ── */
+  .back-btn {
+    background: none; border: none;
+    color: var(--clr-accent);
     font-size: var(--fs-md);
     font-weight: 600;
     cursor: pointer; padding: 0;
@@ -299,9 +369,9 @@ const GLOBAL_CSS = `
 
   /* ── Remove / inline action buttons ── */
   .remove-btn {
-    background: rgba(255,69,96,.1);
-    border: 1px solid rgba(255,69,96,.2);
-    color: ${RED};
+    background: rgba(245,34,45,.1);
+    border: 1px solid rgba(245,34,45,.2);
+    color: var(--clr-red);
     border-radius: 10px;
     padding: clamp(7px,2vw,10px) clamp(10px,2.8vw,14px);
     font-size: var(--fs-base);
@@ -309,7 +379,7 @@ const GLOBAL_CSS = `
     cursor: pointer;
   }
   .update-price-btn {
-    background: ${ACCENT};
+    background: var(--clr-accent);
     color: #fff; border: none;
     border-radius: 10px;
     padding: clamp(7px,2vw,10px) clamp(10px,2.8vw,14px);
@@ -318,9 +388,9 @@ const GLOBAL_CSS = `
     cursor: pointer;
   }
   .export-header-btn {
-    background: rgba(245,166,35,.1);
-    border: 1px solid rgba(245,166,35,.2);
-    color: ${GOLD};
+    background: rgba(245,166,35,.12);
+    border: 1px solid rgba(245,166,35,.3);
+    color: var(--clr-gold);
     border-radius: 10px;
     padding: clamp(4px,1.5vw,7px) clamp(9px,2.5vw,13px);
     font-size: var(--fs-sm);
@@ -329,20 +399,54 @@ const GLOBAL_CSS = `
     white-space: nowrap;
   }
 
-  /* ── Sticky top panel (header + hero + action buttons) ── */
+  /* ── Market prices full screen ── */
+  .market-screen {
+    min-height: 100dvh;
+    background: var(--clr-bg);
+    color: var(--clr-text);
+    font-family: 'DM Sans', sans-serif;
+    width: 100%; max-width: 640px; margin: 0 auto;
+    padding-bottom: clamp(40px,8vw,60px);
+  }
+  .market-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: clamp(11px,3vw,14px) var(--gutter,18px);
+    border-bottom: 1px solid var(--clr-border);
+    background: var(--clr-card);
+  }
+  .market-row:first-child { border-top: 1px solid var(--clr-border); }
+  .market-sym   { font-weight: 700; font-size: var(--fs-md); }
+  .market-price { font-weight: 600; font-size: var(--fs-md); }
+  .market-right { text-align: right; }
+  .market-volume { font-size: var(--fs-xs); color: var(--clr-dim); margin-top: 2px; }
+
+  /* ── Stock price sub-label in home card ── */
+  .card-price { font-size: var(--fs-sm); color: var(--clr-dim); margin-top: 1px; }
+
+  /* ── View Market Prices button ── */
+  .market-btn {
+    background: rgba(45,127,249,.1);
+    border: 1px solid rgba(45,127,249,.25);
+    color: var(--clr-accent);
+    border-radius: 10px;
+    padding: clamp(7px,2vw,10px) clamp(10px,2.8vw,14px);
+    font-size: var(--fs-base);
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .market-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* ── Sticky top panel ── */
   .sticky-panel {
     position: sticky;
     top: 0;
     z-index: 10;
-    background: ${BG};
-    /* Subtle shadow to separate from scrolling list below */
-    box-shadow: 0 4px 24px rgba(0,0,0,.55);
-	width: 97vw;
-  }
-
-  /* ── Scrollable holdings list ── */
-  .scroll-list {
-    /* Nothing special needed — natural flow beneath sticky panel */
+    background: var(--clr-bg);
+    box-shadow: 0 4px 24px var(--clr-shadow);
+    transition: background 0.25s;
   }
 
   /* ── Tablet+: snap FAB to content column edge ── */
@@ -354,31 +458,31 @@ const GLOBAL_CSS = `
   @keyframes spin { to { transform: rotate(360deg); } }
 `;
 
-// ─── Styles object (layout + component tokens) ───────────────────────────────
+// ─── Styles object (layout + component tokens — all colours via CSS vars) ─────
 const S = {
-  root   : { minHeight: "100dvh", background: BG, color: TEXT, fontFamily: "'DM Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "clamp(80px,14vw,110px)" },
+  root   : { minHeight: "100dvh", background: "var(--clr-bg)", color: "var(--clr-text)", fontFamily: "'DM Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "clamp(80px,14vw,110px)" },
   header : { padding: "clamp(28px,8vw,52px) var(--gutter,18px) 8px" },
-  hero   : { margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", background: "linear-gradient(135deg,#0d1e3a,#091628)", padding: "clamp(16px,4vw,24px) var(--gutter,18px)", border: `1px solid ${BORDER}` },
-  label  : { fontSize: "var(--fs-xs)", letterSpacing: 2.2, color: DIM, textTransform: "uppercase", marginBottom: 3 },
+  hero   : { margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", background: "var(--clr-hero-grad)", padding: "clamp(16px,4vw,24px) var(--gutter,18px)", border: "1px solid var(--clr-border)" },
+  label  : { fontSize: "var(--fs-xs)", letterSpacing: 2.2, color: "var(--clr-dim)", textTransform: "uppercase", marginBottom: 3 },
   bigNum : { fontSize: "var(--fs-3xl)", fontWeight: 800, letterSpacing: -1, lineHeight: 1.1 },
   row    : { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  card   : { margin: 0, background: CARD, borderRadius: 0, padding: "clamp(12px,3.2vw,16px) var(--gutter,18px)", borderBottom: `1px solid ${BORDER}`, cursor: "pointer" },
-  divider: { borderTop: `1px solid ${BORDER}`, margin: "clamp(8px,2.2vw,12px) 0" },
+  card   : { margin: 0, background: "var(--clr-card)", borderRadius: 0, padding: "clamp(12px,3.2vw,16px) var(--gutter,18px)", borderBottom: "1px solid var(--clr-border)", cursor: "pointer" },
+  divider: { borderTop: "1px solid var(--clr-border)", margin: "clamp(8px,2.2vw,12px) 0" },
 
   // Buttons
-  btn       : { background: ACCENT, color: "#fff", border: "none", borderRadius: 12, padding: "clamp(11px,3vw,14px) 20px", fontWeight: 700, fontSize: "var(--fs-md)", cursor: "pointer", width: "100%", marginTop: "var(--gap-sm)" },
-  ghostBtn  : { background: CARD, color: TEXT, border: `1px dashed ${BORDER}`, borderRadius: 12, padding: "clamp(11px,3vw,14px) 20px", fontWeight: 600, fontSize: "var(--fs-md)", cursor: "pointer", width: "100%", marginTop: "var(--gap-sm)" },
-  liveBtn   : { background: "linear-gradient(135deg,#0a2a1a,#0d3320)", color: GREEN, border: `1px solid rgba(0,230,118,.25)`, borderRadius: 12, padding: "clamp(11px,3vw,14px) 20px", fontWeight: 700, fontSize: "var(--fs-md)", cursor: "pointer", width: "100%", marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--gap-sm)" },
-  liveBtnDis: { background: "linear-gradient(135deg,#0a2a1a,#0d3320)", color: DIM, border: `1px solid rgba(0,230,118,.1)`, borderRadius: 12, padding: "clamp(11px,3vw,14px) 20px", fontWeight: 700, fontSize: "var(--fs-md)", cursor: "not-allowed", width: "100%", marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--gap-sm)" },
-  exportBtn : { background: "linear-gradient(135deg,#1a1500,#2a1f00)", color: GOLD, border: `1px solid rgba(245,166,35,.25)`, borderRadius: 12, padding: "clamp(10px,2.8vw,13px) 14px", fontWeight: 700, fontSize: "var(--fs-base)", cursor: "pointer", flex: 1, marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 },
-  dangerBtn : { background: "rgba(255,69,96,.08)", color: RED, border: `1px solid rgba(255,69,96,.2)`, borderRadius: 12, padding: "clamp(10px,2.8vw,13px) 14px", fontWeight: 700, fontSize: "var(--fs-base)", cursor: "pointer", width: "100%", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 },
-  input     : { background: "#060b12", border: `1px solid ${BORDER}`, borderRadius: 10, color: TEXT, padding: "clamp(10px,2.8vw,13px) 13px", fontSize: "var(--fs-lg)", width: "100%", boxSizing: "border-box", marginBottom: "var(--gap-sm)", outline: "none" },
+  btn       : { background: "var(--clr-accent)", color: "#fff", border: "none", borderRadius: 12, padding: "clamp(11px,3vw,14px) 20px", fontWeight: 700, fontSize: "var(--fs-md)", cursor: "pointer", width: "100%", marginTop: "var(--gap-sm)" },
+  ghostBtn  : { background: "var(--clr-card)", color: "var(--clr-text)", border: "1px dashed var(--clr-border)", borderRadius: 12, padding: "clamp(11px,3vw,14px) 20px", fontWeight: 600, fontSize: "var(--fs-md)", cursor: "pointer", width: "100%", marginTop: "var(--gap-sm)" },
+  liveBtn   : { background: "var(--clr-live-grad)", color: "var(--clr-green)", border: "1px solid rgba(0,200,83,.3)", borderRadius: 12, padding: "clamp(11px,3vw,14px) 20px", fontWeight: 700, fontSize: "var(--fs-md)", cursor: "pointer", width: "100%", marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--gap-sm)" },
+  liveBtnDis: { background: "var(--clr-live-grad)", color: "var(--clr-dim)", border: "1px solid rgba(0,200,83,.1)", borderRadius: 12, padding: "clamp(11px,3vw,14px) 20px", fontWeight: 700, fontSize: "var(--fs-md)", cursor: "not-allowed", width: "100%", marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--gap-sm)" },
+  exportBtn : { background: "var(--clr-export-grad)", color: "var(--clr-gold)", border: "1px solid rgba(245,166,35,.3)", borderRadius: 12, padding: "clamp(10px,2.8vw,13px) 14px", fontWeight: 700, fontSize: "var(--fs-base)", cursor: "pointer", flex: 1, marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 },
+  dangerBtn : { background: "rgba(245,34,45,.08)", color: "var(--clr-red)", border: "1px solid rgba(245,34,45,.2)", borderRadius: 12, padding: "clamp(10px,2.8vw,13px) 14px", fontWeight: 700, fontSize: "var(--fs-base)", cursor: "pointer", width: "100%", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 },
+  input     : { background: "var(--clr-input-bg)", border: "1px solid var(--clr-border)", borderRadius: 10, color: "var(--clr-text)", padding: "clamp(10px,2.8vw,13px) 13px", fontSize: "var(--fs-lg)", width: "100%", boxSizing: "border-box", marginBottom: "var(--gap-sm)", outline: "none" },
 
   // Inline badges
-  pill        : v => ({ display: "inline-block", padding: "3px 9px", borderRadius: 7, fontSize: "var(--fs-sm)", fontWeight: 700, background: v >= 0 ? "rgba(0,230,118,.12)" : "rgba(255,69,96,.12)", color: col(v) }),
-  changeBadge : v => ({ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 7, fontSize: "var(--fs-sm)", fontWeight: 700, background: v >= 0 ? "rgba(0,230,118,.1)" : "rgba(255,69,96,.1)", color: col(v) }),
-  avatar      : { width: "var(--avatar-size)", height: "var(--avatar-size)", borderRadius: 11, background: "#131f30", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "var(--fs-xs)", color: ACCENT, flexShrink: 0 },
-  dbTag       : { display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 6, fontSize: "var(--fs-xs)", fontWeight: 700, background: "rgba(0,230,118,.1)", color: GREEN, letterSpacing: 0.4 },
+  pill        : v => ({ display: "inline-block", padding: "3px 9px", borderRadius: 7, fontSize: "var(--fs-sm)", fontWeight: 700, background: v > 0 ? "rgba(0,200,83,.12)" : v < 0 ? "rgba(245,34,45,.12)" : "rgba(140,155,176,.12)", color: col(v) }),
+  changeBadge : v => ({ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 7, fontSize: "var(--fs-sm)", fontWeight: 700, background: v > 0 ? "rgba(0,200,83,.1)" : v < 0 ? "rgba(245,34,45,.1)" : "rgba(140,155,176,.1)", color: col(v) }),
+  avatar      : { width: "var(--avatar-size)", height: "var(--avatar-size)", borderRadius: 11, background: "var(--clr-avatar-bg)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "var(--fs-xs)", color: "var(--clr-accent)", flexShrink: 0 },
+  dbTag       : { display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 6, fontSize: "var(--fs-xs)", fontWeight: 700, background: "rgba(0,200,83,.1)", color: "var(--clr-green)", letterSpacing: 0.4 },
 };
 
 // ─── Small UI components ─────────────────────────────────────────────────────
@@ -435,17 +539,30 @@ export default function App() {
   const [fetchError,     setFetchError]     = useState("");
   const [lastUpdated,    setLastUpdated]    = useState(null);
   const [exportOpen,     setExportOpen]     = useState(false);
+  const [confirmClear,   setConfirmClear]   = useState(false);
   const [hidden,         setHidden]         = useState(false);
+  const [liveSnapshot,   setLiveSnapshot]   = useState(null);
+  const [showMarket,     setShowMarket]     = useState(false);
+  const [lightTheme,     setLightTheme]     = useState(false);
+
+  // ── Apply theme class to body ─────────────────────────────────────────────
+  useEffect(() => {
+    document.body.classList.toggle("light", lightTheme);
+  }, [lightTheme]);
   const fileRef   = useRef();
   const importRef = useRef();
 
   // ── Inject global CSS once ────────────────────────────────────────────────
   useEffect(() => {
+    if (!document.getElementById("gse-theme")) {
+      const t = document.createElement("style");
+      t.id = "gse-theme"; t.textContent = THEME_CSS;
+      document.head.prepend(t);
+    }
     if (!document.getElementById("gse-global")) {
-      const tag = document.createElement("style");
-      tag.id = "gse-global";
-      tag.textContent = GLOBAL_CSS;
-      document.head.appendChild(tag);
+      const g = document.createElement("style");
+      g.id = "gse-global"; g.textContent = GLOBAL_CSS;
+      document.head.appendChild(g);
     }
   }, []);
 
@@ -523,6 +640,9 @@ export default function App() {
       const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
       if (!res.ok) throw new Error(`API error: ${res.status}`);
       const data = await res.json();
+      // Store full snapshot (sorted by % change desc) for market prices page
+      const snapshot = [...data].sort((a, b) => b.change - a.change);
+      setLiveSnapshot({ items: snapshot, fetchedAt: new Date() });
       const priceMap = {};
       for (const item of data) priceMap[item.name.toUpperCase()] = { price: item.price, prevPrice: item.change !== 0 ? item.price / (1 + item.change / 100) : item.price, dayChangePct: item.change };
       let matched = 0, unmatched = [];
@@ -601,9 +721,15 @@ export default function App() {
               <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5 }}>{s.symbol}</div>
             </div>
             <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center" }}>
+              <button className="theme-btn" onClick={() => setLightTheme(t => !t)} title={lightTheme ? "Switch to dark" : "Switch to light"}>
+                {lightTheme ? "🌙" : "☀️"}
+              </button>
               <button className="eye-btn" onClick={() => setHidden(h => !h)} title={hidden ? "Show amounts" : "Hide amounts"}>
                 {hidden ? <EyeOffIcon /> : <EyeIcon />}
               </button>
+              {liveSnapshot && (
+                <button className="market-btn" onClick={() => setShowMarket(true)}>📈 Market</button>
+              )}
               <button className="remove-btn" onClick={() => removeSymbol(s.symbol).then(() => setScreen("home"))}>Remove</button>
               <button className="update-price-btn" onClick={() => { setEditingPrice(s.symbol); setPriceInput(s.currentPrice ?? ""); setPrevInput(s.prevPrice ?? ""); }}>Update Price</button>
             </div>
@@ -615,10 +741,10 @@ export default function App() {
           <div style={S.label}>Market Value</div>
           <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${(curVal ?? s.totalCost).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
           <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
-            {pnl    !== null && <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}><div style={S.label}>Total P&L</div><div style={{ color: hidden ? DIM : col(pnl),    fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(pnlPct) : fmtGHS(pnl))}</div></div>}
-            {dayPnl !== null && <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}><div style={S.label}>Today</div>    <div style={{ color: hidden ? DIM : col(dayPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(dayPct) : fmtGHS(dayPnl))}</div></div>}
+            {pnl    !== null && <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}><div style={S.label}>Total P&L</div><div style={{ color: hidden ? "var(--clr-dim)" : col(pnl),    fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(pnlPct) : fmtGHS(pnl))}</div></div>}
+            {dayPnl !== null && <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}><div style={S.label}>Today</div>    <div style={{ color: hidden ? "var(--clr-dim)" : col(dayPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(dayPct) : fmtGHS(dayPnl))}</div></div>}
           </div>
-          <div style={{ fontSize: "var(--fs-xs)", color: DIM, marginTop: "clamp(8px,2vw,12px)" }}>Tap to toggle GHS ↔ %</div>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>Tap to toggle GHS ↔ %</div>
         </div>
 
         {/* Day & Since-purchase change mini cards */}
@@ -642,7 +768,7 @@ export default function App() {
         )}
 
         {/* Stats table */}
-        <div style={{ borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, background: CARD, padding: "0 var(--gutter,18px)" }}>
+        <div style={{ borderTop: "1px solid var(--clr-border)", borderBottom: "1px solid var(--clr-border)", background: "var(--clr-card)", padding: "0 var(--gutter,18px)" }}>
           {[
             ["Shares Held",      s.totalShares.toLocaleString()],
             ["Avg Cost / Share", hidden ? "••••" : `GHS ${s.avgCost.toFixed(4)}`],
@@ -663,10 +789,10 @@ export default function App() {
         {s.trades.map((t, i) => (
           <div key={i} style={{ ...S.card, cursor: "default" }}>
             <div style={S.row}>
-              <span style={{ color: DIM, fontSize: "var(--fs-base)" }}>{t.date}</span>
+              <span style={{ color: "var(--clr-dim)", fontSize: "var(--fs-base)" }}>{t.date}</span>
               <span style={S.pill(-1)}>{hidden ? "••••••" : `-GHS ${(t.consideration + t.charges).toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}</span>
             </div>
-            <div style={{ marginTop: "clamp(3px,1vw,6px)", fontSize: "var(--fs-base)", color: DIM }}>
+            <div style={{ marginTop: "clamp(3px,1vw,6px)", fontSize: "var(--fs-base)", color: "var(--clr-dim)" }}>
               {t.shares} shares {hidden ? "@ •••• · Fees: ••••" : `@ GHS ${t.pricePerShare} · Fees: GHS ${t.charges}`}
             </div>
           </div>
@@ -682,9 +808,80 @@ export default function App() {
             <div style={S.label}>Previous Close (GHS)</div>
             <input style={S.input} type="number" value={prevInput}  onChange={e => setPrevInput(e.target.value)}  placeholder="e.g. 0.98" />
             <div className="btn-pair" style={{ marginTop: "var(--gap-sm)" }}>
-              <button style={{ ...S.btn, background: CARD, marginTop: 0 }} onClick={() => setEditingPrice(null)}>Cancel</button>
+              <button style={{ ...S.btn, background: "var(--clr-card)", marginTop: 0 }} onClick={() => setEditingPrice(null)}>Cancel</button>
               <button style={{ ...S.btn, marginTop: 0 }} onClick={() => savePrice(s.symbol)}>Save</button>
             </div>
+          </div>
+        )}
+
+        {/* ── Market Prices overlay screen ── */}
+        {showMarket && liveSnapshot && (
+          <div className="market-screen" style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 50, overflowY: "auto", height: "100dvh" }}>
+            {/* Header */}
+            <div style={{ ...S.header, position: "sticky", top: 0, background: "var(--clr-bg)", zIndex: 10, boxShadow: "0 2px 16px rgba(0,0,0,.5)" }}>
+              <button className="back-btn" onClick={() => setShowMarket(false)}>← Back</button>
+              <div style={S.row}>
+                <div>
+                  <div style={S.label}>Ghana Stock Exchange</div>
+                  <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5 }}>Market Prices</div>
+                </div>
+                <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", textAlign: "right" }}>
+                  {liveSnapshot.items.length} stocks<br />
+                  <span style={{ color: "var(--clr-dim)" }}>
+                    {liveSnapshot.fetchedAt.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Summary bar: gainers / losers / unchanged */}
+            {(() => {
+              const gainers   = liveSnapshot.items.filter(x => x.change > 0).length;
+              const losers    = liveSnapshot.items.filter(x => x.change < 0).length;
+              const unchanged = liveSnapshot.items.filter(x => x.change === 0).length;
+              return (
+                <div style={{ display: "flex", borderBottom: "1px solid var(--clr-border)", borderTop: "1px solid var(--clr-border)", background: "var(--clr-card)" }}>
+                  {[["▲ Gainers", gainers, "var(--clr-green)"], ["▼ Losers", losers, "var(--clr-red)"], ["━ Unchanged", unchanged, "var(--clr-dim)"]].map(([label, count, color]) => (
+                    <div key={label} style={{ flex: 1, padding: "clamp(8px,2vw,12px) var(--gutter,18px)", textAlign: "center", borderRight: "1px solid var(--clr-border)" }}>
+                      <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.5, textTransform: "uppercase" }}>{label}</div>
+                      <div style={{ fontWeight: 800, fontSize: "var(--fs-xl)", color, marginTop: 2 }}>{count}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Column headers */}
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "clamp(6px,1.5vw,9px) var(--gutter,18px)", background: "var(--clr-bg)" }}>
+              <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.8, textTransform: "uppercase" }}>Symbol</span>
+              <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.8, textTransform: "uppercase" }}>Price · Change · Volume</span>
+            </div>
+
+            {/* Price rows */}
+            {liveSnapshot.items.map(item => {
+              const inPortfolio = !!portfolio[item.name.toUpperCase()];
+              const prevPrice   = item.change !== 0 ? item.price / (1 + item.change / 100) : item.price;
+              return (
+                <div key={item.name} className="market-row" style={{ background: inPortfolio ? "rgba(45,127,249,.06)" : "var(--clr-card)" }}>
+                  <div>
+                    <div className="market-sym" style={{ color: inPortfolio ? "var(--clr-accent)" : "var(--clr-text)" }}>
+                      {item.name}
+                      {inPortfolio && <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", marginLeft: 6, fontWeight: 600 }}>● held</span>}
+                    </div>
+                    <div className="market-volume">Vol: {item.volume?.toLocaleString() ?? "—"}</div>
+                  </div>
+                  <div className="market-right">
+                    <div className="market-price">GHS {item.price.toFixed(2)}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 2 }}>
+                      <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>prev {prevPrice.toFixed(2)}</span>
+                      <div style={{ ...S.changeBadge(item.change), fontSize: "var(--fs-xs)", padding: "2px 6px" }}>
+                        <Arrow value={item.change} />{item.change >= 0 ? "+" : ""}{item.change.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -704,11 +901,14 @@ export default function App() {
         <div style={S.header}>
           <div style={{ ...S.row, alignItems: "flex-start" }}>
             <div>
-              <div style={{ fontSize: "var(--fs-xs)", color: DIM, letterSpacing: 3, textTransform: "uppercase" }}>IC Securities · GSE</div>
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 3, textTransform: "uppercase" }}>IC Securities · GSE</div>
               <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>My Portfolio</div>
             </div>
             <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
               {dbReady && <div style={S.dbTag}>💾 Saved</div>}
+              <button className="theme-btn" onClick={() => setLightTheme(t => !t)} title={lightTheme ? "Switch to dark" : "Switch to light"}>
+                {lightTheme ? "🌙" : "☀️"}
+              </button>
               <button className="eye-btn" onClick={() => setHidden(h => !h)} title={hidden ? "Show amounts" : "Hide amounts"}>
                 {hidden ? <EyeOffIcon /> : <EyeIcon />}
               </button>
@@ -726,14 +926,14 @@ export default function App() {
           <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
             <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}>
               <div style={S.label}>Total P&L</div>
-              <div style={{ color: hidden ? DIM : col(totalPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalPnlPct) : fmtGHS(totalPnl))}</div>
+              <div style={{ color: hidden ? "var(--clr-dim)" : col(totalPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalPnlPct) : fmtGHS(totalPnl))}</div>
             </div>
             <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}>
               <div style={S.label}>Today</div>
-              <div style={{ color: hidden ? DIM : col(totalDayPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalDayPct) : fmtGHS(totalDayPnl))}</div>
+              <div style={{ color: hidden ? "var(--clr-dim)" : col(totalDayPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalDayPct) : fmtGHS(totalDayPnl))}</div>
             </div>
           </div>
-          <div style={{ fontSize: "var(--fs-xs)", color: DIM, marginTop: "clamp(8px,2vw,12px)" }}>Tap figures to toggle GHS ↔ %</div>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>Tap figures to toggle GHS ↔ %</div>
         </div>
 
         {/* Action buttons */}
@@ -744,7 +944,7 @@ export default function App() {
           <button style={S.ghostBtn} onClick={() => fileRef.current.click()} disabled={loading}>
             {loading ? <><Spinner />{loadMsg}</> : "⬆ Import PDF Statement"}
           </button>
-          {error && <div style={{ color: RED, fontSize: "var(--fs-sm)", marginTop: "var(--gap-sm)" }}>{error}</div>}
+          {error && <div style={{ color: "var(--clr-red)", fontSize: "var(--fs-sm)", marginTop: "var(--gap-sm)" }}>{error}</div>}
 
           {stocks.length > 0 && (
             <>
@@ -752,7 +952,7 @@ export default function App() {
                 {fetchingPrices ? <><Spinner />Fetching GSE prices…</> : <><span>⚡</span>Fetch Live Prices</>}
               </button>
               {lastUpdated && !fetchingPrices && (
-                <div style={{ fontSize: "var(--fs-sm)", color: DIM, marginTop: "var(--gap-sm)", textAlign: "center" }}>
+                <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: "var(--gap-sm)", textAlign: "center" }}>
                   Last updated {lastUpdated.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}
                 </div>
               )}
@@ -767,9 +967,9 @@ export default function App() {
       <div className="holdings-list">
         {stocks.length > 0 && <div className="section-label">Holdings · {stocks.length} stocks</div>}
       {stocks.length === 0 && !loading && (
-        <div style={{ textAlign: "center", color: DIM, marginTop: "clamp(40px,10vw,72px)", fontSize: "var(--fs-md)", lineHeight: 1.8, padding: "0 var(--gutter,18px)" }}>
+        <div style={{ textAlign: "center", color: "var(--clr-dim)", marginTop: "clamp(40px,10vw,72px)", fontSize: "var(--fs-md)", lineHeight: 1.8, padding: "0 var(--gutter,18px)" }}>
           {dbReady
-            ? <>Import your IC Securities PDF or tap <strong style={{ color: ACCENT }}>+</strong> to add manually.</>
+            ? <>Import your IC Securities PDF or tap <strong style={{ color: "var(--clr-accent)" }}>+</strong> to add manually.</>
             : <><Spinner />Loading saved portfolio…</>}
         </div>
       )}
@@ -789,7 +989,10 @@ export default function App() {
                 <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: "var(--fs-lg)" }}>{s.symbol}</div>
-                  <div style={{ fontSize: "var(--fs-sm)", color: DIM }}>{s.totalShares.toLocaleString()} shares</div>
+                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>{s.totalShares.toLocaleString()} shares</div>
+                  {s.currentPrice !== null && (
+                    <div className="card-price">GHS {s.currentPrice} / share</div>
+                  )}
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
@@ -826,7 +1029,7 @@ export default function App() {
 
             {s.currentPrice === null && (
               <div onClick={e => { e.stopPropagation(); setEditingPrice(s.symbol); setPriceInput(""); setPrevInput(""); }}
-                style={{ marginTop: "var(--gap-sm)", fontSize: "var(--fs-sm)", color: ACCENT, cursor: "pointer" }}>
+                style={{ marginTop: "var(--gap-sm)", fontSize: "var(--fs-sm)", color: "var(--clr-accent)", cursor: "pointer" }}>
                 + Set current price
               </div>
             )}
@@ -844,7 +1047,7 @@ export default function App() {
           <div style={S.label}>Previous Close (GHS)</div>
           <input style={S.input} type="number" value={prevInput}  onChange={e => setPrevInput(e.target.value)}  placeholder="e.g. 0.98" />
           <div className="btn-pair" style={{ marginTop: "var(--gap-sm)" }}>
-            <button style={{ ...S.btn, background: CARD, marginTop: 0 }} onClick={() => setEditingPrice(null)}>Cancel</button>
+            <button style={{ ...S.btn, background: "var(--clr-card)", marginTop: 0 }} onClick={() => setEditingPrice(null)}>Cancel</button>
             <button style={{ ...S.btn, marginTop: 0 }} onClick={() => savePrice(editingPrice)}>Save</button>
           </div>
         </div>
@@ -861,7 +1064,7 @@ export default function App() {
             </div>
           ))}
           <div className="btn-pair" style={{ marginTop: "var(--gap-sm)" }}>
-            <button style={{ ...S.btn, background: CARD, marginTop: 0 }} onClick={() => setManualOpen(false)}>Cancel</button>
+            <button style={{ ...S.btn, background: "var(--clr-card)", marginTop: 0 }} onClick={() => setManualOpen(false)}>Cancel</button>
             <button style={{ ...S.btn, marginTop: 0 }} onClick={addManual}>Add</button>
           </div>
         </div>
@@ -873,7 +1076,7 @@ export default function App() {
           <div style={{ ...S.row, marginBottom: "var(--gap-md)" }}>
             <div className="sheet-title" style={{ margin: 0 }}>Data & Export</div>
             <button onClick={() => { setExportOpen(false); setConfirmClear(false); }}
-              style={{ background: "none", border: "none", color: DIM, fontSize: "var(--fs-xl)", cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
+              style={{ background: "none", border: "none", color: "var(--clr-dim)", fontSize: "var(--fs-xl)", cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
           </div>
 
           <div style={S.label}>Export portfolio</div>
@@ -898,8 +1101,8 @@ export default function App() {
             <div className="danger-box">
               <p>This will permanently delete all holdings and trades from this device. Are you sure?</p>
               <div className="btn-pair">
-                <button style={{ ...S.btn, background: CARD, marginTop: 0 }} onClick={() => setConfirmClear(false)}>Cancel</button>
-                <button style={{ ...S.btn, background: RED,  marginTop: 0 }} onClick={clearAll}>Yes, clear all</button>
+                <button style={{ ...S.btn, background: "var(--clr-card)", marginTop: 0 }} onClick={() => setConfirmClear(false)}>Cancel</button>
+                <button style={{ ...S.btn, background: "var(--clr-red)",  marginTop: 0 }} onClick={clearAll}>Yes, clear all</button>
               </div>
             </div>
           )}
