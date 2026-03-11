@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
-// Legacy build for iOS Safari — standard build uses iterator syntax Safari rejects
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+// pdfjs is bundled locally in src/lib/ — no npm dependency, works fully offline.
+// The worker is loaded as a raw string and turned into a Blob URL so Safari
+// never has to fetch an external file (which it blocks for workers).
+import * as pdfjsLib from "./lib/pdf.min.mjs";
+import pdfjsWorkerSrc from "./lib/pdf.worker.js?raw";
 
-// The worker is copied into /public at build time by vite.config.js.
-// Serving it as a plain static file avoids all CDN MIME/version issues on mobile Safari.
-pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
+const workerBlob = new Blob([pdfjsWorkerSrc], { type: "application/javascript" });
+const workerBlobUrl = URL.createObjectURL(workerBlob);
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerBlobUrl;
 
 // ─── Colour helpers (read from CSS custom properties at runtime) ─────────────
 // These are used for JS-only computations (col(), pill(), changeBadge()).

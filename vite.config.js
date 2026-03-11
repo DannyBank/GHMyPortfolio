@@ -1,8 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
-import { copyFileSync, mkdirSync } from 'fs'
-import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
@@ -26,32 +24,11 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff2}'],
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB — covers bundled pdfjs
       }
-    }),
-    // Copy the pdfjs legacy worker into public/ so Vite serves it as a static asset
-    {
-      name: 'copy-pdfjs-worker',
-      buildStart() {
-        try {
-          mkdirSync('public', { recursive: true })
-          copyFileSync(
-            resolve('node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'),
-            resolve('public/pdf.worker.mjs')
-          )
-        } catch (e) {
-          console.warn('Could not copy pdfjs worker:', e.message)
-        }
-      }
-    }
+    })
   ],
-  optimizeDeps: {
-    exclude: ['pdfjs-dist'],
-  },
   build: {
     target: 'esnext',
-  },
-  resolve: {
-    extensions: ['.mjs', '.js', '.jsx', '.ts', '.tsx', '.json'],
   },
 })
