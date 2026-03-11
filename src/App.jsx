@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
-// Use the legacy pdfjs build — required for Safari/WebKit on iOS.
-// The standard build uses modern JS (for...of on iterators, etc.) that
-// iOS Safari doesn't fully support and throws "undefined is not a function".
+// Legacy pdfjs build — required for Safari/WebKit on iOS.
+// Standard build uses modern iterator syntax iOS Safari rejects.
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+
+// Worker must come from the same legacy build on the CDN to match exactly.
+// Using pdf.worker.min.mjs (the legacy worker) not the standard one.
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 

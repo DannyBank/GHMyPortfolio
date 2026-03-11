@@ -28,13 +28,18 @@ export default defineConfig({
     })
   ],
   optimizeDeps: {
-    // Prevent Vite from pre-bundling pdfjs — it handles its own workers
+    // Don't pre-bundle pdfjs — it manages its own worker separately
     exclude: ['pdfjs-dist'],
   },
   build: {
-    // Allow pdfjs legacy build (uses older module syntax) to pass through
-    commonjsOptions: {
-      include: [/pdfjs-dist/]
-    }
-  }
+    rollupOptions: {
+      external: [],
+    },
+    // Allow top-level await used inside pdfjs legacy build
+    target: 'esnext',
+  },
+  // Ensure .mjs files from pdfjs legacy are resolved correctly
+  resolve: {
+    extensions: ['.mjs', '.js', '.jsx', '.ts', '.tsx', '.json'],
+  },
 })
