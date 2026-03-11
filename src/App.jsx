@@ -1,13 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
-// Legacy pdfjs build — required for Safari/WebKit on iOS.
-// Standard build uses modern iterator syntax iOS Safari rejects.
+// Legacy build for iOS Safari — standard build uses iterator syntax Safari rejects
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
-// Worker must come from the same legacy build on the CDN to match exactly.
-// Using pdf.worker.min.mjs (the legacy worker) not the standard one.
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+// The worker is copied into /public at build time by vite.config.js.
+// Serving it as a plain static file avoids all CDN MIME/version issues on mobile Safari.
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 
 // ─── Colour helpers (read from CSS custom properties at runtime) ─────────────
 // These are used for JS-only computations (col(), pill(), changeBadge()).
