@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import * as pdfjsLib from "pdfjs-dist";
 
-// Use the CDN worker that matches the installed pdfjs-dist version.
-// The ?url / local worker import breaks on Netlify and some Vite builds.
+// Use the legacy pdfjs build — required for Safari/WebKit on iOS.
+// The standard build uses modern JS (for...of on iterators, etc.) that
+// iOS Safari doesn't fully support and throws "undefined is not a function".
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 

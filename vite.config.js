@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-	plugins: [
+  plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -24,12 +24,17 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}']
-      }})
-	],
-	optimizeDeps: {
-		exclude: ['pdfjs-dist']
-	}
-	server: {
-		allowedHosts: ['margorie-unsilhouetted-pratingly.ngrok-free.dev']
-	}
+      }
+    })
+  ],
+  optimizeDeps: {
+    // Prevent Vite from pre-bundling pdfjs — it handles its own workers
+    exclude: ['pdfjs-dist'],
+  },
+  build: {
+    // Allow pdfjs legacy build (uses older module syntax) to pass through
+    commonjsOptions: {
+      include: [/pdfjs-dist/]
+    }
+  }
 })
