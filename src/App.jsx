@@ -245,7 +245,7 @@ const GLOBAL_CSS = `
     bottom: max(env(safe-area-inset-bottom,0px) + 18px, 22px);
     right:  max(env(safe-area-inset-right, 0px) + 18px, 18px);
     width:  var(--avatar-size);
-    height: var(--avatar-size);
+    /*height: var(--avatar-size);*/
     border-radius: 50%;
     background: var(--clr-accent);
     color: #fff;
