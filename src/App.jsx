@@ -196,8 +196,16 @@ function triggerDownload(blob, filename) {
 //    --fs-3xl   : 26–38 px  (hero total value)
 //
 const GLOBAL_CSS = `
+  @font-face {
+    font-family: 'Brighter Sans';
+    src: url('/brighter-sans-medium.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+  }
+
   *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--clr-bg); -webkit-text-size-adjust: 100%; transition: background 0.25s, color 0.25s; }
+  html, body { margin: 0; padding: 0; background: var(--clr-bg); -webkit-text-size-adjust: 100%; transition: background 0.25s, color 0.25s; font-family: 'Brighter Sans', sans-serif; }
 
   :root {
     --gutter       : clamp(14px, 4.5vw, 24px);
@@ -245,7 +253,7 @@ const GLOBAL_CSS = `
     bottom: max(env(safe-area-inset-bottom,0px) + 18px, 22px);
     right:  max(env(safe-area-inset-right, 0px) + 18px, 18px);
     width:  var(--avatar-size);
-    /*height: var(--avatar-size);*/
+    height: var(--avatar-size);
     border-radius: 50%;
     background: var(--clr-accent);
     color: #fff;
@@ -408,7 +416,7 @@ const GLOBAL_CSS = `
     min-height: 100dvh;
     background: var(--clr-bg);
     color: var(--clr-text);
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Brighter Sans', sans-serif;
     width: 100%; max-width: 640px; margin: 0 auto;
     padding-bottom: clamp(40px,8vw,60px);
   }
@@ -464,7 +472,7 @@ const GLOBAL_CSS = `
 
 // ─── Styles object (layout + component tokens — all colours via CSS vars) ─────
 const S = {
-  root   : { minHeight: "100dvh", background: "var(--clr-bg)", color: "var(--clr-text)", fontFamily: "'DM Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "clamp(80px,14vw,110px)" },
+  root   : { minHeight: "100dvh", background: "var(--clr-bg)", color: "var(--clr-text)", fontFamily: "'Brighter Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "clamp(80px,14vw,110px)" },
   header : { padding: "clamp(28px,8vw,52px) var(--gutter,18px) 8px" },
   hero   : { margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", background: "var(--clr-hero-grad)", padding: "clamp(16px,4vw,24px) var(--gutter,18px)", border: "1px solid var(--clr-border)" },
   label  : { fontSize: "var(--fs-xs)", letterSpacing: 2.2, color: "var(--clr-dim)", textTransform: "uppercase", marginBottom: 3 },
