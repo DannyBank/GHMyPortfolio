@@ -71,7 +71,8 @@ const THEME_CSS = `
 `;
 
 // ─── IndexedDB helpers ───────────────────────────────────────────────────────
-const DB_NAME = "gse-portfolio", DB_VERSION = 1, STORE = "portfolio";
+const DB_NAME = "gse-portfolio", DB_VERSION = 2, STORE = "portfolio";
+const STORE_TB = "tbills", STORE_MF = "mutualfunds";
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -80,6 +81,10 @@ function openDB() {
       const db = e.target.result;
       if (!db.objectStoreNames.contains(STORE))
         db.createObjectStore(STORE, { keyPath: "symbol" });
+      if (!db.objectStoreNames.contains(STORE_TB))
+        db.createObjectStore(STORE_TB, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(STORE_MF))
+        db.createObjectStore(STORE_MF, { keyPath: "id" });
     };
     req.onsuccess = e => resolve(e.target.result);
     req.onerror   = e => reject(e.target.error);
@@ -100,6 +105,19 @@ async function dbDelete(symbol) {
 async function dbClear() {
   const db = await openDB();
   return new Promise((res, rej) => { const r = db.transaction(STORE,"readwrite").objectStore(STORE).clear(); r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error); });
+}
+// Generic helpers for any store
+async function storeGetAll(storeName) {
+  const db = await openDB();
+  return new Promise((res, rej) => { const r = db.transaction(storeName,"readonly").objectStore(storeName).getAll(); r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error); });
+}
+async function storePut(storeName, record) {
+  const db = await openDB();
+  return new Promise((res, rej) => { const r = db.transaction(storeName,"readwrite").objectStore(storeName).put(record); r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error); });
+}
+async function storeDelete(storeName, id) {
+  const db = await openDB();
+  return new Promise((res, rej) => { const r = db.transaction(storeName,"readwrite").objectStore(storeName).delete(id); r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error); });
 }
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
@@ -250,7 +268,7 @@ const GLOBAL_CSS = `
   /* ── FAB ── */
   .fab-btn {
     position: fixed;
-    bottom: max(env(safe-area-inset-bottom,0px) + 18px, 22px);
+    bottom: calc(max(env(safe-area-inset-bottom, 0px) + 18px, 22px) + 62px);
     right:  max(env(safe-area-inset-right, 0px) + 18px, 18px);
     width:  var(--avatar-size);
     height: var(--avatar-size);
@@ -466,13 +484,110 @@ const GLOBAL_CSS = `
     .fab-btn { right: calc(50% - min(50vw, 320px) + 18px); }
   }
 
+  /* ── Bottom navigation bar ── */
+  .bottom-nav {
+    position: fixed;
+    bottom: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 100%; max-width: 640px;
+    background: var(--clr-card-alt);
+    border-top: 1px solid var(--clr-border);
+    display: flex;
+    z-index: 30;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-shadow: 0 -4px 20px var(--clr-shadow);
+  }
+  .nav-item {
+    flex: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: clamp(8px,2vw,12px) 4px;
+    gap: 3px;
+    background: none; border: none;
+    color: var(--clr-dim);
+    font-family: 'Brighter Sans', sans-serif;
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    transition: color 0.15s;
+    letter-spacing: 0.5px;
+  }
+  .nav-item.active { color: var(--clr-accent); }
+  .nav-item svg { width: 20px; height: 20px; }
+
+  /* ── Page wrapper with nav padding ── */
+  .page-root {
+    min-height: 100dvh;
+    background: var(--clr-bg);
+    color: var(--clr-text);
+    font-family: 'Brighter Sans', sans-serif;
+    width: 100%; max-width: 640px;
+    margin: 0 auto;
+    padding-bottom: clamp(80px,16vw,110px);
+  }
+
+  /* ── Investment card (T-Bills / Mutual Funds) ── */
+  .inv-card {
+    margin: 0;
+    background: var(--clr-card);
+    border-bottom: 1px solid var(--clr-border);
+    padding: clamp(14px,3.5vw,18px) var(--gutter,18px);
+    cursor: default;
+  }
+  .inv-card-title { font-weight: 700; font-size: var(--fs-lg); }
+  .inv-card-sub   { font-size: var(--fs-sm); color: var(--clr-dim); margin-top: 2px; }
+  .inv-row { display: flex; justify-content: space-between; align-items: flex-start; }
+  .inv-stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border-top: 1px solid var(--clr-border);
+    border-bottom: 1px solid var(--clr-border);
+    background: var(--clr-card);
+  }
+  .inv-stat {
+    padding: clamp(10px,2.8vw,14px) var(--gutter,18px);
+    border-right: 1px solid var(--clr-border);
+    border-bottom: 1px solid var(--clr-border);
+  }
+  .inv-stat:nth-child(2n) { border-right: none; }
+  .inv-stat:nth-last-child(-n+2) { border-bottom: none; }
+  .inv-stat-label { font-size: var(--fs-xs); color: var(--clr-dim); letter-spacing: 1.6px; text-transform: uppercase; margin-bottom: 4px; }
+  .inv-stat-value { font-weight: 700; font-size: var(--fs-md); }
+
+  /* ── Summary page hero tiles ── */
+  .summary-tiles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(8px,2vw,12px);
+    padding: clamp(10px,2.5vw,14px) var(--gutter,18px);
+  }
+  .summary-tile {
+    background: var(--clr-card);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-card);
+    padding: clamp(12px,3vw,16px);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .summary-tile-icon { font-size: clamp(18px,4.5vw,24px); }
+  .summary-tile-label { font-size: var(--fs-xs); color: var(--clr-dim); letter-spacing: 1.4px; text-transform: uppercase; }
+  .summary-tile-value { font-weight: 800; font-size: var(--fs-lg); }
+  .summary-tile-sub   { font-size: var(--fs-xs); color: var(--clr-dim); }
+
+  /* ── MF daily entry row ── */
+  .mf-entry-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: clamp(10px,2.8vw,13px) var(--gutter,18px);
+    border-bottom: 1px solid var(--clr-border);
+    background: var(--clr-card);
+  }
+  .mf-entry-row:first-child { border-top: 1px solid var(--clr-border); }
+
   /* ── Spinner animation ── */
   @keyframes spin { to { transform: rotate(360deg); } }
 `;
 
 // ─── Styles object (layout + component tokens — all colours via CSS vars) ─────
 const S = {
-  root   : { minHeight: "100dvh", background: "var(--clr-bg)", color: "var(--clr-text)", fontFamily: "'Brighter Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "clamp(80px,14vw,110px)" },
+  root   : { minHeight: "100dvh", background: "var(--clr-bg)", color: "var(--clr-text)", fontFamily: "'Brighter Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "clamp(90px,18vw,120px)" },
   header : { padding: "clamp(28px,8vw,52px) var(--gutter,18px) 8px" },
   hero   : { margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", background: "var(--clr-hero-grad)", padding: "clamp(16px,4vw,24px) var(--gutter,18px)", border: "1px solid var(--clr-border)" },
   label  : { fontSize: "var(--fs-xs)", letterSpacing: 2.2, color: "var(--clr-dim)", textTransform: "uppercase", marginBottom: 3 },
@@ -532,7 +647,408 @@ function EyeOffIcon() {
   );
 }
 
-// ─── App ─────────────────────────────────────────────────────────────────────
+// ─── Bottom Navigation ────────────────────────────────────────────────────────
+function BottomNav({ tab, setTab }) {
+  const items = [
+    { id: "stocks",      label: "Stocks",   icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> },
+    { id: "tbills",      label: "T-Bills",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
+    { id: "mutualfunds", label: "Funds",    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg> },
+    { id: "summary",     label: "Summary",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> },
+  ];
+  return (
+    <nav className="bottom-nav">
+      {items.map(it => (
+        <button key={it.id} className={`nav-item${tab === it.id ? " active" : ""}`} onClick={() => setTab(it.id)}>
+          {it.icon}
+          {it.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+
+// ─── T-Bills Screen ───────────────────────────────────────────────────────────
+function TBillsScreen({ tbills, hidden, tbillSheet, setTbillSheet, editingTbill, setEditingTbill,
+  tbForm, setTbForm, saveTbill, deleteTbill, lightTheme, setLightTheme, setHidden }) {
+  const totalInvested  = tbills.reduce((s, x) => s + x.principal, 0);
+  const totalMaturity  = tbills.reduce((s, x) => s + x.maturityAmount, 0);
+  const totalEarnings  = totalMaturity - totalInvested;
+  return (
+    <div style={S.root}>
+      <div style={S.header}>
+        <div style={{ ...S.row, alignItems: "flex-start" }}>
+          <div>
+            <div style={S.label}>IC Securities</div>
+            <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>Treasury Bills</div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
+            <button className="theme-btn" onClick={() => setLightTheme(t => !t)}>{lightTheme ? "🌙" : "☀️"}</button>
+            <button className="eye-btn" onClick={() => setHidden(h => !h)}>{hidden ? <EyeOffIcon /> : <EyeIcon />}</button>
+          </div>
+        </div>
+      </div>
+      <div style={S.hero}>
+        <div style={S.label}>Total Invested</div>
+        <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${totalInvested.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}</div>
+        <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
+          <div><div style={S.label}>Expected Returns</div>
+            <div style={{ color: hidden ? "var(--clr-dim)" : "var(--clr-green)", fontWeight: 700, fontSize: "var(--fs-xl)" }}>
+              {hidden ? "••••" : `+GHS ${totalEarnings.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}
+            </div>
+          </div>
+          <div><div style={S.label}>Maturity Total</div>
+            <div style={{ fontWeight: 700, fontSize: "var(--fs-xl)" }}>
+              {hidden ? "••••" : `GHS ${totalMaturity.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}
+            </div>
+          </div>
+        </div>
+      </div>
+      {tbills.length === 0 && (
+        <div style={{ textAlign: "center", color: "var(--clr-dim)", marginTop: "clamp(40px,10vw,72px)", fontSize: "var(--fs-md)", lineHeight: 1.8 }}>
+          No treasury bills yet.<br/>Tap <strong style={{ color: "var(--clr-accent)" }}>+</strong> to add one.
+        </div>
+      )}
+      {tbills.length > 0 && <div className="section-label">Holdings · {tbills.length} bill{tbills.length !== 1 ? "s" : ""}</div>}
+      <div className="holdings-list">
+        {tbills.map(tb => {
+          const earnings = tb.maturityAmount - tb.principal;
+          return (
+            <div key={tb.id} className="inv-card">
+              <div className="inv-row" style={{ marginBottom: "var(--gap-sm)" }}>
+                <div>
+                  <div className="inv-card-title">{tb.label}</div>
+                  {tb.maturityDate && <div className="inv-card-sub">Matures {tb.maturityDate}</div>}
+                </div>
+                <div style={{ display: "flex", gap: "var(--gap-sm)" }}>
+                  <button className="update-price-btn" style={{ fontSize: "var(--fs-xs)", padding: "5px 10px" }}
+                    onClick={() => { setEditingTbill(tb); setTbForm({ label: tb.label, principal: tb.principal, rate: tb.rate, maturityDate: tb.maturityDate || "", duration: tb.duration || "91" }); setTbillSheet(true); }}>Edit</button>
+                  <button className="remove-btn" style={{ fontSize: "var(--fs-xs)", padding: "5px 10px" }} onClick={() => deleteTbill(tb.id)}>Remove</button>
+                </div>
+              </div>
+              <div className="inv-stat-grid">
+                {[
+                  ["Duration",      `${tb.duration || 91} days`],
+                  ["Rate",          `${tb.rate}%`],
+                  ["Invested",      hidden ? "••••••" : `GHS ${tb.principal.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`],
+                  ["Interest Earned", hidden ? "••••" : `+GHS ${(tb.interest ?? tb.maturityAmount - tb.principal).toLocaleString("en-GH", { minimumFractionDigits: 2 })}`],
+                  ["Maturity Amt",  hidden ? "••••••" : `GHS ${tb.maturityAmount.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`],
+                ].map(([lbl, val], i) => (
+                  <div key={i} className="inv-stat">
+                    <div className="inv-stat-label">{lbl}</div>
+                    <div className="inv-stat-value" style={{ color: lbl === "Interest Earned" ? "var(--clr-green)" : lbl === "Rate" ? "var(--clr-accent)" : lbl === "Duration" ? "var(--clr-gold)" : "var(--clr-text)" }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {tbillSheet && (
+        <div className="bottom-sheet">
+          <div className="sheet-title">{editingTbill ? "Edit T-Bill" : "Add Treasury Bill"}</div>
+
+          <div style={S.label}>Duration</div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", marginBottom: "var(--gap-sm)" }}>
+            {[["91", "91-Day"], ["182", "182-Day"], ["364", "364-Day"]].map(([val, lbl]) => (
+              <button key={val} onClick={() => setTbForm(f => ({ ...f, duration: val }))}
+                style={{ flex: 1, padding: "clamp(9px,2.5vw,12px) 8px", borderRadius: 10, border: `1px solid ${tbForm.duration === val ? "var(--clr-accent)" : "var(--clr-border)"}`, background: tbForm.duration === val ? "rgba(45,127,249,.15)" : "var(--clr-input-bg)", color: tbForm.duration === val ? "var(--clr-accent)" : "var(--clr-text)", fontWeight: 700, cursor: "pointer", fontSize: "var(--fs-base)", fontFamily: "'Brighter Sans', sans-serif" }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+
+          {[["Label (optional)", "label", "e.g. Batch 1", "text"],
+            ["Principal Amount (GHS)", "principal", "e.g. 5000", "number"],
+            ["Interest Rate (%)", "rate", "e.g. 28.5", "number"],
+            ["Maturity Date (optional)", "maturityDate", "e.g. 2026-06-01", "text"]
+          ].map(([lbl, key, ph, type]) => (
+            <div key={key}>
+              <div style={S.label}>{lbl}</div>
+              <input style={S.input} type={type} placeholder={ph} value={tbForm[key]}
+                onChange={e => setTbForm(f => ({ ...f, [key]: e.target.value }))} />
+            </div>
+          ))}
+
+          {tbForm.principal && tbForm.rate && (() => {
+            const p = parseFloat(tbForm.principal), r = parseFloat(tbForm.rate);
+            if (isNaN(p) || isNaN(r)) return null;
+            const divisor  = tbForm.duration === "91" ? 4 : tbForm.duration === "182" ? 2 : 1;
+            const interest = (p * r / 100) / divisor;
+            const maturity = p + interest;
+            return (
+              <div style={{ background: "rgba(0,200,83,.07)", border: "1px solid rgba(0,200,83,.2)", borderRadius: 10, padding: "clamp(10px,2.8vw,14px)", marginBottom: "var(--gap-sm)" }}>
+                <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.6, textTransform: "uppercase", marginBottom: 6 }}>Preview</div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>Interest Earned</div>
+                    <div style={{ fontWeight: 700, color: "var(--clr-green)", fontSize: "var(--fs-md)" }}>+GHS {interest.toLocaleString("en-GH", { minimumFractionDigits: 2 })}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>You Receive</div>
+                    <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {maturity.toLocaleString("en-GH", { minimumFractionDigits: 2 })}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          <div className="btn-pair" style={{ marginTop: "var(--gap-sm)" }}>
+            <button style={{ ...S.btn, background: "var(--clr-card)", marginTop: 0 }}
+              onClick={() => { setTbillSheet(false); setEditingTbill(null); setTbForm({ label: "", principal: "", rate: "", maturityDate: "", duration: "91" }); }}>Cancel</button>
+            <button style={{ ...S.btn, marginTop: 0 }} onClick={saveTbill}>Save</button>
+          </div>
+        </div>
+      )}
+      <button className="fab-btn" onClick={() => { setEditingTbill(null); setTbForm({ label: "", principal: "", rate: "", maturityDate: "", duration: "91" }); setTbillSheet(true); }}>+</button>
+    </div>
+  );
+}
+
+// ─── Mutual Funds Screen ──────────────────────────────────────────────────────
+function MutualFundsScreen({ mfunds, hidden, mfSheet, setMfSheet, editingMF, setEditingMF,
+  mfForm, setMfForm, saveMF, deleteMF, mfEntrySheet, setMfEntrySheet,
+  mfEntryForm, setMfEntryForm, saveMFEntry, deleteMFEntry, showMFPct, setShowMFPct,
+  lightTheme, setLightTheme, setHidden }) {
+  const totalPrincipal = mfunds.reduce((s, x) => s + (x.principal || 0), 0);
+  const totalInterest  = mfunds.reduce((s, f) => s + (f.entries || []).reduce((a, e) => a + e.interest, 0), 0);
+  const latestMaturity = mfunds.reduce((s, f) => {
+    const entries = f.entries || [];
+    if (!entries.length) return s + (f.principal || 0);
+    return s + entries[entries.length - 1].maturityAmount;
+  }, 0);
+  return (
+    <div style={S.root}>
+      <div style={S.header}>
+        <div style={{ ...S.row, alignItems: "flex-start" }}>
+          <div>
+            <div style={S.label}>IC Securities</div>
+            <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>Mutual Funds</div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
+            <button className="theme-btn" onClick={() => setLightTheme(t => !t)}>{lightTheme ? "🌙" : "☀️"}</button>
+            <button className="eye-btn" onClick={() => setHidden(h => !h)}>{hidden ? <EyeOffIcon /> : <EyeIcon />}</button>
+          </div>
+        </div>
+      </div>
+      <div style={S.hero}>
+        <div style={S.label}>Total Invested</div>
+        <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${totalPrincipal.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}</div>
+        <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
+          <div><div style={S.label}>Total Interest Earned</div>
+            <div style={{ color: hidden ? "var(--clr-dim)" : "var(--clr-green)", fontWeight: 700, fontSize: "var(--fs-xl)" }}>
+              {hidden ? "••••" : `+GHS ${totalInterest.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}
+            </div>
+          </div>
+          <div><div style={S.label}>Latest Maturity</div>
+            <div style={{ fontWeight: 700, fontSize: "var(--fs-xl)" }}>
+              {hidden ? "••••" : `GHS ${latestMaturity.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}
+            </div>
+          </div>
+        </div>
+      </div>
+      {mfunds.length === 0 && (
+        <div style={{ textAlign: "center", color: "var(--clr-dim)", marginTop: "clamp(40px,10vw,72px)", fontSize: "var(--fs-md)", lineHeight: 1.8 }}>
+          No mutual funds yet.<br/>Tap <strong style={{ color: "var(--clr-accent)" }}>+</strong> to add one.
+        </div>
+      )}
+      {mfunds.map(fund => {
+        const entries   = fund.entries || [];
+        const totalInt  = entries.reduce((s, e) => s + e.interest, 0);
+        const lastEntry = entries[entries.length - 1];
+        const intPct    = fund.principal ? (totalInt / fund.principal) * 100 : 0;
+        return (
+          <div key={fund.id}>
+            <div className="inv-card">
+              <div className="inv-row" style={{ marginBottom: "var(--gap-sm)" }}>
+                <div>
+                  <div className="inv-card-title">{fund.name}</div>
+                  <div className="inv-card-sub">{entries.length} daily entr{entries.length === 1 ? "y" : "ies"}</div>
+                </div>
+                <div style={{ display: "flex", gap: "var(--gap-sm)", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <button className="update-price-btn" style={{ fontSize: "var(--fs-xs)", padding: "5px 10px" }}
+                    onClick={() => { setMfEntryForm({ date: "", interest: "", maturityAmount: "" }); setMfEntrySheet(fund.id); }}>+ Entry</button>
+                  <button className="update-price-btn" style={{ fontSize: "var(--fs-xs)", padding: "5px 10px", background: "var(--clr-card)", color: "var(--clr-accent)", border: "1px solid var(--clr-accent)" }}
+                    onClick={() => { setEditingMF(fund); setMfForm({ name: fund.name, principal: fund.principal }); setMfSheet(true); }}>Edit</button>
+                  <button className="remove-btn" style={{ fontSize: "var(--fs-xs)", padding: "5px 10px" }} onClick={() => deleteMF(fund.id)}>Remove</button>
+                </div>
+              </div>
+              <div className="inv-stat-grid">
+                {[
+                  ["Principal",       hidden ? "••••••" : `GHS ${(fund.principal||0).toLocaleString("en-GH",{minimumFractionDigits:2})}`],
+                  ["Total Interest",  hidden ? "••••"   : `+GHS ${totalInt.toLocaleString("en-GH",{minimumFractionDigits:2})}`],
+                  ["Interest %",      `${intPct.toFixed(3)}%`],
+                  ["Latest Maturity", hidden ? "••••••" : (lastEntry ? `GHS ${lastEntry.maturityAmount.toLocaleString("en-GH",{minimumFractionDigits:2})}` : "—")],
+                ].map(([lbl, val], i) => (
+                  <div key={i} className="inv-stat">
+                    <div className="inv-stat-label">{lbl}</div>
+                    <div className="inv-stat-value" style={{ color: lbl==="Total Interest" ? "var(--clr-green)" : lbl==="Interest %" ? "var(--clr-accent)" : "var(--clr-text)" }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {entries.length > 0 && (
+              <>
+                <div className="section-label">{fund.name} · Daily Entries</div>
+                {[...entries].reverse().map((entry, ri) => {
+                  const idx    = entries.length - 1 - ri;
+                  const pctKey = `${fund.id}_${idx}`;
+                  const pctVal = fund.principal ? (entry.interest / fund.principal) * 100 : 0;
+                  return (
+                    <div key={idx} className="mf-entry-row">
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: "var(--fs-base)" }}>{entry.date}</div>
+                        <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 2 }}>
+                          Maturity: {hidden ? "••••••" : `GHS ${entry.maturityAmount.toLocaleString("en-GH",{minimumFractionDigits:2})}`}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-sm)" }}>
+                        <div style={{ ...S.pill(entry.interest), cursor: "pointer" }}
+                          onClick={() => setShowMFPct(p => ({ ...p, [pctKey]: !p[pctKey] }))}>
+                          {hidden ? "••••" : showMFPct[pctKey]
+                            ? `+${pctVal.toFixed(4)}%`
+                            : `+GHS ${entry.interest.toLocaleString("en-GH",{minimumFractionDigits:2})}`}
+                        </div>
+                        <button className="remove-btn" style={{ fontSize: "var(--fs-xs)", padding: "4px 8px" }} onClick={() => deleteMFEntry(fund.id, idx)}>✕</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        );
+      })}
+      {mfSheet && (
+        <div className="bottom-sheet">
+          <div className="sheet-title">{editingMF ? "Edit Fund" : "Add Mutual Fund"}</div>
+          {[["Fund Name","name","e.g. EDC Balanced Fund","text"],["Principal Amount (GHS)","principal","e.g. 10000","number"]].map(([lbl,key,ph,type]) => (
+            <div key={key}>
+              <div style={S.label}>{lbl}</div>
+              <input style={S.input} type={type} placeholder={ph} value={mfForm[key]} onChange={e => setMfForm(f => ({ ...f, [key]: e.target.value }))} />
+            </div>
+          ))}
+          <div className="btn-pair" style={{ marginTop: "var(--gap-sm)" }}>
+            <button style={{ ...S.btn, background: "var(--clr-card)", marginTop: 0 }} onClick={() => { setMfSheet(false); setEditingMF(null); setMfForm({ name: "", principal: "" }); }}>Cancel</button>
+            <button style={{ ...S.btn, marginTop: 0 }} onClick={saveMF}>Save</button>
+          </div>
+        </div>
+      )}
+      {mfEntrySheet && (
+        <div className="bottom-sheet">
+          <div className="sheet-title">Add Daily Entry</div>
+          {[["Date","date",today(),"text"],["Daily Interest Earned (GHS)","interest","e.g. 12.50","number"],["Maturity Amount (GHS)","maturityAmount","e.g. 10012.50","number"]].map(([lbl,key,ph,type]) => (
+            <div key={key}>
+              <div style={S.label}>{lbl}</div>
+              <input style={S.input} type={type} placeholder={ph} value={mfEntryForm[key]} onChange={e => setMfEntryForm(f => ({ ...f, [key]: e.target.value }))} />
+            </div>
+          ))}
+          <div className="btn-pair" style={{ marginTop: "var(--gap-sm)" }}>
+            <button style={{ ...S.btn, background: "var(--clr-card)", marginTop: 0 }} onClick={() => { setMfEntrySheet(null); setMfEntryForm({ date: "", interest: "", maturityAmount: "" }); }}>Cancel</button>
+            <button style={{ ...S.btn, marginTop: 0 }} onClick={saveMFEntry}>Save</button>
+          </div>
+        </div>
+      )}
+      <button className="fab-btn" onClick={() => { setEditingMF(null); setMfForm({ name: "", principal: "" }); setMfSheet(true); }}>+</button>
+    </div>
+  );
+}
+
+// ─── Summary Screen ───────────────────────────────────────────────────────────
+function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightTheme, setLightTheme }) {
+  const stocks         = Object.values(portfolio);
+  const stocksValue    = stocks.reduce((s, x) => s + (x.currentPrice !== null ? x.currentPrice * x.totalShares : x.totalCost), 0);
+  const stocksInvested = stocks.reduce((s, x) => s + x.totalCost, 0);
+  const stocksPnl      = stocksValue - stocksInvested;
+  const tbInvested     = tbills.reduce((s, x) => s + x.principal, 0);
+  const tbMaturity     = tbills.reduce((s, x) => s + x.maturityAmount, 0);
+  const tbEarnings     = tbMaturity - tbInvested;
+  const mfPrincipal    = mfunds.reduce((s, x) => s + (x.principal || 0), 0);
+  const mfInterest     = mfunds.reduce((s, f) => s + (f.entries || []).reduce((a, e) => a + e.interest, 0), 0);
+  const mfLatest       = mfunds.reduce((s, f) => {
+    const entries = f.entries || [];
+    if (!entries.length) return s + (f.principal || 0);
+    return s + entries[entries.length - 1].maturityAmount;
+  }, 0);
+  const totalInvested  = stocksInvested + tbInvested + mfPrincipal;
+  const totalValue     = stocksValue + tbMaturity + mfLatest;
+  const totalEarnings  = totalValue - totalInvested;
+  const totalEarnPct   = totalInvested ? (totalEarnings / totalInvested) * 100 : 0;
+  const fmtPlain = v => `GHS ${Math.abs(v).toLocaleString("en-GH", { minimumFractionDigits: 2 })}`;
+  const tiles = [
+    { icon: "📈", label: "Stocks Value",     value: fmtPlain(stocksValue),  sub: `${stocksPnl >= 0 ? "+" : ""}GHS ${Math.abs(stocksPnl).toLocaleString("en-GH",{minimumFractionDigits:2})} P&L`, subColor: col(stocksPnl) },
+    { icon: "🏦", label: "T-Bills Maturity", value: fmtPlain(tbMaturity),   sub: tbInvested ? `+GHS ${tbEarnings.toLocaleString("en-GH",{minimumFractionDigits:2})} returns` : "No bills yet", subColor: "var(--clr-green)" },
+    { icon: "⏱",  label: "Funds Value",      value: fmtPlain(mfLatest),     sub: `+GHS ${mfInterest.toLocaleString("en-GH",{minimumFractionDigits:2})} interest`, subColor: "var(--clr-green)" },
+    { icon: "💰", label: "Total Invested",   value: fmtPlain(totalInvested),sub: "across all investments", subColor: "var(--clr-dim)" },
+  ];
+  return (
+    <div style={S.root}>
+      <div style={S.header}>
+        <div style={{ ...S.row, alignItems: "flex-start" }}>
+          <div>
+            <div style={S.label}>IC Securities</div>
+            <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>Summary</div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
+            <button className="theme-btn" onClick={() => setLightTheme(t => !t)}>{lightTheme ? "🌙" : "☀️"}</button>
+            <button className="eye-btn" onClick={() => setHidden(h => !h)}>{hidden ? <EyeOffIcon /> : <EyeIcon />}</button>
+          </div>
+        </div>
+      </div>
+      <div style={S.hero}>
+        <div style={S.label}>Total Portfolio Value</div>
+        <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${totalValue.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}</div>
+        <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
+          <div><div style={S.label}>Total Earnings</div>
+            <div style={{ color: hidden ? "var(--clr-dim)" : col(totalEarnings), fontWeight: 700, fontSize: "var(--fs-xl)" }}>
+              {hidden ? "••••" : `${totalEarnings >= 0 ? "+" : ""}GHS ${Math.abs(totalEarnings).toLocaleString("en-GH",{minimumFractionDigits:2})}`}
+            </div>
+          </div>
+          <div><div style={S.label}>Return</div>
+            <div style={{ color: hidden ? "var(--clr-dim)" : col(totalEarnPct), fontWeight: 700, fontSize: "var(--fs-xl)" }}>
+              {hidden ? "••••" : fmtPct(totalEarnPct)}
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>Stocks + T-Bills + Mutual Funds</div>
+      </div>
+      <div className="section-label">Breakdown</div>
+      <div className="summary-tiles">
+        {tiles.map(tile => (
+          <div key={tile.label} className="summary-tile">
+            <div className="summary-tile-icon">{tile.icon}</div>
+            <div className="summary-tile-label">{tile.label}</div>
+            <div className="summary-tile-value">{hidden ? "••••••" : tile.value}</div>
+            <div className="summary-tile-sub" style={{ color: tile.subColor }}>{hidden ? "••••" : tile.sub}</div>
+          </div>
+        ))}
+      </div>
+      <div className="section-label" style={{ marginTop: "var(--gap-md)" }}>Allocation</div>
+      <div style={{ borderTop: "1px solid var(--clr-border)", borderBottom: "1px solid var(--clr-border)", background: "var(--clr-card)", padding: "0 var(--gutter,18px)" }}>
+        {[["Stocks","📈",stocksValue,stocksInvested],["T-Bills","🏦",tbMaturity,tbInvested],["Mutual Funds","⏱",mfLatest,mfPrincipal]].map(([name,icon,val,inv]) => {
+          const pct  = totalValue ? (val / totalValue) * 100 : 0;
+          const earn = val - inv;
+          return (
+            <div key={name} className="stat-row">
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-sm)" }}>
+                <span style={{ fontSize: "var(--fs-lg)" }}>{icon}</span>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: "var(--fs-md)" }}>{name}</div>
+                  <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>{pct.toFixed(1)}% of portfolio</div>
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>{hidden ? "••••••" : `GHS ${val.toLocaleString("en-GH",{minimumFractionDigits:2})}`}</div>
+                <div style={{ fontSize: "var(--fs-xs)", color: col(earn) }}>{hidden ? "••••" : `${earn>=0?"+":""}GHS ${Math.abs(earn).toLocaleString("en-GH",{minimumFractionDigits:2})}`}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [portfolio,      setPortfolio]      = useState({});
   const [dbReady,        setDbReady]        = useState(false);
@@ -556,6 +1072,20 @@ export default function App() {
   const [liveSnapshot,   setLiveSnapshot]   = useState(null);
   const [showMarket,     setShowMarket]     = useState(false);
   const [lightTheme,     setLightTheme]     = useState(false);
+  const [navTab,         setNavTab]         = useState("stocks"); // stocks | tbills | mutualfunds | summary
+  // T-Bills
+  const [tbills,         setTbills]         = useState([]);
+  const [tbillSheet,     setTbillSheet]     = useState(false);
+  const [editingTbill,   setEditingTbill]   = useState(null); // null = add, obj = edit
+  const [tbForm,         setTbForm]         = useState({ label: "", principal: "", rate: "", maturityDate: "", duration: "91" });
+  // Mutual Funds
+  const [mfunds,         setMfunds]         = useState([]);
+  const [mfSheet,        setMfSheet]        = useState(false);
+  const [mfEntrySheet,   setMfEntrySheet]   = useState(null); // fund id being added entry for
+  const [editingMF,      setEditingMF]      = useState(null);
+  const [mfForm,         setMfForm]         = useState({ name: "", principal: "" });
+  const [mfEntryForm,    setMfEntryForm]    = useState({ date: "", interest: "", maturityAmount: "" });
+  const [showMFPct,      setShowMFPct]      = useState({});
 
   // ── Apply theme class to body ─────────────────────────────────────────────
   useEffect(() => {
@@ -700,6 +1230,83 @@ export default function App() {
     await dbClear(); setPortfolio({}); setConfirmClear(false); setExportOpen(false);
   }
 
+  // ── Load T-Bills from DB ──────────────────────────────────────────────────
+  useEffect(() => {
+    storeGetAll(STORE_TB).then(rows => setTbills(rows)).catch(() => {});
+  }, []);
+
+  // ── Load Mutual Funds from DB ─────────────────────────────────────────────
+  useEffect(() => {
+    storeGetAll(STORE_MF).then(rows => setMfunds(rows)).catch(() => {});
+  }, []);
+
+  // ── T-Bill CRUD ───────────────────────────────────────────────────────────
+  function saveTbill() {
+    const { label, principal, rate, maturityDate, duration } = tbForm;
+    if (!principal || !rate) return;
+    const p = parseFloat(principal), r = parseFloat(rate);
+    if (isNaN(p) || isNaN(r)) return;
+    // Formula: interest = principal × (rate / 100)
+    // 91-day  → divide by 4  (quarter of a year)
+    // 182-day → divide by 2  (half of a year)
+    // 364-day → full year    (no division)
+    const divisor = duration === "91" ? 4 : duration === "182" ? 2 : 1;
+    const interest = (p * r / 100) / divisor;
+    const maturityAmount = p + interest;
+    const id = editingTbill?.id ?? `tb_${Date.now()}`;
+    const record = { id, label: label || `${duration}-Day T-Bill`, principal: p, rate: r, duration, maturityDate, interest, maturityAmount };
+    storePut(STORE_TB, record).catch(console.error);
+    setTbills(prev => editingTbill
+      ? prev.map(x => x.id === id ? record : x)
+      : [...prev, record]);
+    setTbForm({ label: "", principal: "", rate: "", maturityDate: "", duration: "91" });
+    setTbillSheet(false); setEditingTbill(null);
+  }
+  function deleteTbill(id) {
+    storeDelete(STORE_TB, id).catch(console.error);
+    setTbills(prev => prev.filter(x => x.id !== id));
+  }
+
+  // ── Mutual Fund CRUD ──────────────────────────────────────────────────────
+  function saveMF() {
+    const { name, principal } = mfForm;
+    if (!name) return;
+    const p = parseFloat(principal) || 0;
+    const id = editingMF?.id ?? `mf_${Date.now()}`;
+    const record = editingMF
+      ? { ...editingMF, name, principal: p }
+      : { id, name, principal: p, entries: [] };
+    storePut(STORE_MF, record).catch(console.error);
+    setMfunds(prev => editingMF
+      ? prev.map(x => x.id === id ? record : x)
+      : [...prev, record]);
+    setMfForm({ name: "", principal: "" });
+    setMfSheet(false); setEditingMF(null);
+  }
+  function deleteMF(id) {
+    storeDelete(STORE_MF, id).catch(console.error);
+    setMfunds(prev => prev.filter(x => x.id !== id));
+  }
+  function saveMFEntry() {
+    const { date, interest, maturityAmount } = mfEntryForm;
+    if (!interest) return;
+    const fund = mfunds.find(x => x.id === mfEntrySheet);
+    if (!fund) return;
+    const entry = { date: date || today(), interest: parseFloat(interest), maturityAmount: parseFloat(maturityAmount) || 0 };
+    const updated = { ...fund, entries: [...(fund.entries || []), entry] };
+    storePut(STORE_MF, updated).catch(console.error);
+    setMfunds(prev => prev.map(x => x.id === mfEntrySheet ? updated : x));
+    setMfEntryForm({ date: "", interest: "", maturityAmount: "" });
+    setMfEntrySheet(null);
+  }
+  function deleteMFEntry(fundId, idx) {
+    const fund = mfunds.find(x => x.id === fundId);
+    if (!fund) return;
+    const updated = { ...fund, entries: fund.entries.filter((_, i) => i !== idx) };
+    storePut(STORE_MF, updated).catch(console.error);
+    setMfunds(prev => prev.map(x => x.id === fundId ? updated : x));
+  }
+
   // ── Totals ────────────────────────────────────────────────────────────────
   const stocks        = Object.values(portfolio);
   const totalInvested = stocks.reduce((s, x) => s + x.totalCost, 0);
@@ -708,6 +1315,41 @@ export default function App() {
   const totalPnlPct   = totalInvested ? (totalPnl / totalInvested) * 100 : 0;
   const totalDayPnl   = stocks.reduce((s, x) => x.currentPrice !== null && x.prevPrice !== null ? s + (x.currentPrice - x.prevPrice) * x.totalShares : s, 0);
   const totalDayPct   = (totalValue - totalDayPnl) ? (totalDayPnl / (totalValue - totalDayPnl)) * 100 : 0;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TAB ROUTING — non-stock tabs
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (navTab === "tbills") return (
+    <>
+      <TBillsScreen tbills={tbills} hidden={hidden} tbillSheet={tbillSheet} setTbillSheet={setTbillSheet}
+        editingTbill={editingTbill} setEditingTbill={setEditingTbill}
+        tbForm={tbForm} setTbForm={setTbForm} saveTbill={saveTbill} deleteTbill={deleteTbill}
+        lightTheme={lightTheme} setLightTheme={setLightTheme} setHidden={setHidden} />
+      <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
+    </>
+  );
+
+  if (navTab === "mutualfunds") return (
+    <>
+      <MutualFundsScreen mfunds={mfunds} hidden={hidden} mfSheet={mfSheet} setMfSheet={setMfSheet}
+        editingMF={editingMF} setEditingMF={setEditingMF}
+        mfForm={mfForm} setMfForm={setMfForm} saveMF={saveMF} deleteMF={deleteMF}
+        mfEntrySheet={mfEntrySheet} setMfEntrySheet={setMfEntrySheet}
+        mfEntryForm={mfEntryForm} setMfEntryForm={setMfEntryForm}
+        saveMFEntry={saveMFEntry} deleteMFEntry={deleteMFEntry}
+        showMFPct={showMFPct} setShowMFPct={setShowMFPct}
+        lightTheme={lightTheme} setLightTheme={setLightTheme} setHidden={setHidden} />
+      <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
+    </>
+  );
+
+  if (navTab === "summary") return (
+    <>
+      <SummaryScreen portfolio={portfolio} tbills={tbills} mfunds={mfunds}
+        hidden={hidden} setHidden={setHidden} lightTheme={lightTheme} setLightTheme={setLightTheme} />
+      <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
+    </>
+  );
 
   // ═══════════════════════════════════════════════════════════════════════════
   // DETAIL SCREEN
@@ -722,6 +1364,7 @@ export default function App() {
     const yearPct = s.currentPrice !== null && s.avgCost ? ((s.currentPrice - s.avgCost) / s.avgCost) * 100 : null;
 
     return (
+      <>
       <div style={S.root}>
 
         {/* Header */}
@@ -897,7 +1540,9 @@ export default function App() {
           </div>
         )}
       </div>
-    );
+      <BottomNav tab={navTab} setTab={t => { setNavTab(t); setScreen("home"); setShowMarket(false); }} />
+    </>
+  );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1122,6 +1767,7 @@ export default function App() {
       )}
 
       <button className="fab-btn" onClick={() => setManualOpen(true)}>+</button>
+      <BottomNav tab={navTab} setTab={setNavTab} />
     </div>
   );
 }
