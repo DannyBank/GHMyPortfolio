@@ -197,6 +197,95 @@ function triggerDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+// ─── GSE Portfolio Backup format (Base64-encoded JSON) ───────────────────────
+// Schema matches the external app format:
+//   { version, exportDate, transactions[], favoriteStocks[], favoriteDetails{}, appSignature }
+// Each transaction: { id, symbol, type:"buy", shares, price, date, notes, brokerageFee }
+function exportPortfolioBackup(portfolio) {
+  const transactions = [];
+  for (const s of Object.values(portfolio)) {
+    for (const t of s.trades) {
+      // Convert internal date (DD/MM/YYYY or ISO) to ISO datetime string
+      let isoDate = t.date;
+      if (t.date && t.date.includes("/")) {
+        const [d, m, y] = t.date.split("/");
+        isoDate = `${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}T00:00:00.000`;
+      }
+      const consideration = t.consideration ?? (t.shares * t.pricePerShare);
+      transactions.push({
+        id:           t.id ?? crypto.randomUUID(),
+        symbol:       s.symbol,
+        type:         "buy",
+        shares:       t.shares,
+        price:        t.pricePerShare,
+        date:         isoDate,
+        notes:        consideration ? `Consideration: ${consideration.toLocaleString("en-GH", { minimumFractionDigits: 2 })}` : null,
+        brokerageFee: t.charges ?? null,
+      });
+    }
+  }
+  // Sort by date ascending
+  transactions.sort((a, b) => a.date.localeCompare(b.date));
+
+  const symbols = Object.keys(portfolio);
+  const favoriteDetails = {};
+  for (const s of Object.values(portfolio)) {
+    favoriteDetails[s.symbol] = {
+      initialPrice: s.avgCost ?? s.trades[0]?.pricePerShare ?? 0,
+      timestamp:    Date.now(),
+    };
+  }
+
+  const payload = {
+    version:         "1.0",
+    exportDate:      new Date().toISOString(),
+    transactions,
+    favoriteStocks:  symbols,
+    favoriteDetails,
+    appSignature:    "GSE_PORTFOLIO_BACKUP",
+  };
+
+  const encoded = btoa(JSON.stringify(payload));
+  const filename = `GSE_Portfolio_Backup_${new Date().toISOString().replace(/[-:]/g,"").replace("T","_").slice(0,15)}.txt`;
+  triggerDownload(new Blob([encoded], { type: "text/plain" }), filename);
+}
+
+// Parse an imported GSE_PORTFOLIO_BACKUP .txt file back into internal portfolio format
+function parsePortfolioBackup(text) {
+  const decoded = atob(text.trim());
+  const data    = JSON.parse(decoded);
+  if (data.appSignature !== "GSE_PORTFOLIO_BACKUP") throw new Error("Not a valid GSE Portfolio Backup file.");
+  // Group transactions by symbol
+  const map = {};
+  for (const tx of data.transactions) {
+    if (tx.type !== "buy") continue;
+    const sym = tx.symbol.toUpperCase();
+    if (!map[sym]) map[sym] = { symbol: sym, totalShares: 0, totalCost: 0, trades: [], currentPrice: null, prevPrice: null };
+    const s      = map[sym];
+    const cost   = tx.shares * tx.price;
+    const fee    = tx.brokerageFee ?? 0;
+    // Normalise date to DD/MM/YYYY
+    let dateStr = tx.date ?? "";
+    if (dateStr.includes("T")) {
+      const [y, m, d] = dateStr.split("T")[0].split("-");
+      dateStr = `${d}/${m}/${y}`;
+    }
+    s.totalShares += tx.shares;
+    s.totalCost   += cost + fee;
+    s.trades.push({
+      id:            tx.id,
+      date:          dateStr,
+      shares:        tx.shares,
+      symbol:        sym,
+      pricePerShare: tx.price,
+      consideration: cost,
+      charges:       fee,
+    });
+  }
+  for (const s of Object.values(map)) s.avgCost = s.totalCost / s.totalShares;
+  return map;
+}
+
 // ─── Global responsive CSS (injected once into <head>) ────────────────────────
 //
 //  Design tokens:
@@ -1091,8 +1180,9 @@ export default function App() {
   useEffect(() => {
     document.body.classList.toggle("light", lightTheme);
   }, [lightTheme]);
-  const fileRef   = useRef();
-  const importRef = useRef();
+  const fileRef         = useRef();
+  const importRef       = useRef();
+  const backupImportRef = useRef();
 
   // ── Inject global CSS once ────────────────────────────────────────────────
   useEffect(() => {
@@ -1175,7 +1265,18 @@ export default function App() {
     e.target.value = ""; setExportOpen(false);
   }
 
-  // ── Fetch live prices ─────────────────────────────────────────────────────
+  // ── Import GSE Portfolio Backup (.txt base64) ─────────────────────────────
+  async function handleBackupImport(e) {
+    const file = e.target.files[0]; if (!file) return;
+    try {
+      const text = await file.text();
+      const built = parsePortfolioBackup(text);
+      await dbClear();
+      for (const r of Object.values(built)) await dbPut(r);
+      setPortfolio(built);
+    } catch (err) { setError("Backup import failed: " + err.message); }
+    e.target.value = ""; setExportOpen(false);
+  }
   async function fetchLivePrices() {
     setFetchingPrices(true); setFetchError("");
     try {
@@ -1595,8 +1696,9 @@ export default function App() {
 
         {/* Action buttons */}
         <div style={{ padding: "0 var(--gutter,18px) var(--gap-md,12px)" }}>
-          <input ref={fileRef}   type="file" accept=".pdf"  style={{ display: "none" }} onChange={handleFile} />
-          <input ref={importRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
+          <input ref={fileRef}         type="file" accept=".pdf"  style={{ display: "none" }} onChange={handleFile} />
+          <input ref={importRef}       type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
+          <input ref={backupImportRef} type="file" accept=".txt"  style={{ display: "none" }} onChange={handleBackupImport} />
 
           <button style={S.ghostBtn} onClick={() => fileRef.current.click()} disabled={loading}>
             {loading ? <><Spinner />{loadMsg}</> : "⬆ Import PDF Statement"}
@@ -1742,6 +1844,21 @@ export default function App() {
             <button style={S.exportBtn} onClick={() => { exportJSON(portfolio); setExportOpen(false); }}>💾 JSON (backup)</button>
           </div>
           <div className="sheet-hint">CSV includes all holdings + trade history. JSON can be used to restore this portfolio on another device.</div>
+
+          <div style={{ ...S.divider, margin: "clamp(14px,3.5vw,20px) 0 clamp(10px,2.8vw,16px)" }} />
+
+          <div style={S.label}>GSE Portfolio Backup</div>
+          <div className="export-row">
+            <button style={{ ...S.exportBtn, background: "rgba(0,200,83,.08)", color: "var(--clr-green)", border: "1px solid rgba(0,200,83,.25)" }}
+              onClick={() => { exportPortfolioBackup(portfolio); setExportOpen(false); }}>
+              📤 Export Backup (.txt)
+            </button>
+            <button style={{ ...S.exportBtn, background: "rgba(0,200,83,.08)", color: "var(--clr-green)", border: "1px solid rgba(0,200,83,.25)" }}
+              onClick={() => backupImportRef.current.click()}>
+              📥 Import Backup (.txt)
+            </button>
+          </div>
+          <div className="sheet-hint">Base64-encoded format compatible with other GSE portfolio apps. Export to share with another app, or import a backup from one.</div>
 
           <div style={{ ...S.divider, margin: "clamp(14px,3.5vw,20px) 0 clamp(10px,2.8vw,16px)" }} />
 
