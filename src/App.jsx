@@ -1150,6 +1150,7 @@ export default function App() {
   const [loading,        setLoading]        = useState(false);
   const [loadMsg,        setLoadMsg]        = useState("");
   const [error,          setError]          = useState("");
+  const [pendingTrades,  setPendingTrades]  = useState(null); // trades waiting for merge/replace choice
   const [manualOpen,     setManualOpen]     = useState(false);
   const [manForm,        setManForm]        = useState({ symbol: "", shares: "", price: "", charges: "", date: "" });
   const [fetchingPrices, setFetchingPrices] = useState(false);
@@ -1233,23 +1234,54 @@ export default function App() {
         setError("No 'Bought' transactions found. Ensure the PDF is from IC Securities.");
       } else {
         setLoadMsg(`Found ${trades.length} transactions…`);
-        setPortfolio(prev => {
-          const built = buildPortfolio(trades), next = { ...prev };
-          for (const [sym, data] of Object.entries(built)) {
-            if (next[sym]) {
-              next[sym].totalShares += data.totalShares;
-              next[sym].totalCost   += data.totalCost;
-              next[sym].trades       = [...next[sym].trades, ...data.trades];
-              next[sym].avgCost      = next[sym].totalCost / next[sym].totalShares;
-            } else {
-              next[sym] = { ...data, currentPrice: null, prevPrice: null };
-            }
-          }
-          return next;
-        });
+        setPendingTrades(trades); // show merge/replace choice sheet
       }
     } catch (err) { setError("Error parsing PDF: " + err.message); }
     setLoading(false); setLoadMsg(""); e.target.value = "";
+  }
+
+  // ── Merge PDF trades into existing portfolio (add on top) ─────────────────
+  function commitMerge() {
+    const built = buildPortfolio(pendingTrades);
+    setPortfolio(prev => {
+      const next = { ...prev };
+      for (const [sym, data] of Object.entries(built)) {
+        if (next[sym]) {
+          next[sym].totalShares += data.totalShares;
+          next[sym].totalCost   += data.totalCost;
+          next[sym].trades       = [...next[sym].trades, ...data.trades];
+          next[sym].avgCost      = next[sym].totalCost / next[sym].totalShares;
+        } else {
+          next[sym] = { ...data, currentPrice: null, prevPrice: null };
+        }
+      }
+      return next;
+    });
+    setPendingTrades(null);
+  }
+
+  // ── Replace portfolio with PDF trades (fresh start) ───────────────────────
+  async function commitReplace() {
+    const built = buildPortfolio(pendingTrades);
+    // Preserve current/prev prices for symbols that already exist
+    setPortfolio(prev => {
+      const next = {};
+      for (const [sym, data] of Object.entries(built)) {
+        next[sym] = {
+          ...data,
+          currentPrice: prev[sym]?.currentPrice ?? null,
+          prevPrice:    prev[sym]?.prevPrice    ?? null,
+        };
+      }
+      return next;
+    });
+    // Sync to DB: clear all then write new
+    await dbClear();
+    const built2 = buildPortfolio(pendingTrades);
+    for (const [sym, data] of Object.entries(built2)) {
+      await dbPut({ ...data, currentPrice: null, prevPrice: null });
+    }
+    setPendingTrades(null);
   }
 
   // ── JSON backup restore ───────────────────────────────────────────────────
@@ -1796,6 +1828,31 @@ export default function App() {
         );
       })}
       </div>{/* end holdings-list */}
+
+      {/* ── PDF import mode choice sheet ── */}
+      {pendingTrades && (
+        <div className="bottom-sheet">
+          <div className="sheet-title">Statement Imported</div>
+          <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)", marginBottom: "var(--gap-md)", lineHeight: 1.6 }}>
+            Found <strong style={{ color: "var(--clr-text)" }}>{pendingTrades.length} transaction{pendingTrades.length !== 1 ? "s" : ""}</strong> in this statement.
+            How would you like to apply them?
+          </div>
+
+          <button style={{ ...S.btn, marginTop: 0, marginBottom: "var(--gap-sm)", textAlign: "left", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, padding: "clamp(12px,3vw,16px) clamp(14px,3.5vw,18px)" }}
+            onClick={commitMerge}>
+            <span style={{ fontSize: "var(--fs-md)", fontWeight: 700 }}>➕ Add to existing portfolio</span>
+            <span style={{ fontSize: "var(--fs-sm)", fontWeight: 400, color: "rgba(255,255,255,.7)" }}>Merge these trades on top of what's already saved</span>
+          </button>
+
+          <button style={{ ...S.btn, marginTop: 0, marginBottom: "var(--gap-sm)", background: "rgba(245,34,45,.15)", color: "var(--clr-red)", border: "1px solid rgba(245,34,45,.3)", textAlign: "left", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, padding: "clamp(12px,3vw,16px) clamp(14px,3.5vw,18px)" }}
+            onClick={commitReplace}>
+            <span style={{ fontSize: "var(--fs-md)", fontWeight: 700 }}>🔄 Replace portfolio</span>
+            <span style={{ fontSize: "var(--fs-sm)", fontWeight: 400, color: "var(--clr-dim)" }}>Clear everything and use only this statement's data</span>
+          </button>
+
+          <button style={{ ...S.ghostBtn, marginTop: 0 }} onClick={() => setPendingTrades(null)}>Cancel</button>
+        </div>
+      )}
 
       {/* ── Update price sheet (home) ── */}
       {editingPrice && screen === "home" && (
