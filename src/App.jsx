@@ -11,7 +11,6 @@ const workerBlobUrl = URL.createObjectURL(workerBlob);
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerBlobUrl;
 
 // ─── Colour helpers (read from CSS custom properties at runtime) ─────────────
-// These are used for JS-only computations (col(), pill(), changeBadge()).
 // The actual rendered colours come from CSS vars — these just mirror them.
 const GREEN  = "#00c853";
 const RED    = "#f5222d";
