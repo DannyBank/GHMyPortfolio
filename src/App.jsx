@@ -758,13 +758,193 @@ function BottomNav({ tab, setTab }) {
 
 
 // ─── T-Bills Screen ───────────────────────────────────────────────────────────
+// ─── T-Bill Calculator ────────────────────────────────────────────────────────
+function TBillCalculator({ onClose }) {
+  const [capital,   setCapital]   = useState("");
+  const [duration,  setDuration]  = useState("91");
+  const [rate91,    setRate91]    = useState("");
+  const [rate182,   setRate182]   = useState("");
+  const [rate364,   setRate364]   = useState("");
+  const [rollovers, setRollovers] = useState("1");
+
+  // Current rate field based on selected duration
+  const rateVal = duration === "91" ? rate91 : duration === "182" ? rate182 : rate364;
+  const setRateVal = v => {
+    if (duration === "91")  setRate91(v);
+    else if (duration === "182") setRate182(v);
+    else setRate364(v);
+  };
+
+  // Per-period divisor
+  const divisor = duration === "91" ? 4 : duration === "182" ? 2 : 1;
+  const periods  = parseInt(rollovers) || 1;
+  const p        = parseFloat(capital) || 0;
+  const r        = parseFloat(rateVal) || 0;
+
+  // Traditional T-Bill formula per period:
+  //   interest  = principal × (rate / 100) / divisor
+  //   maturity  = principal + interest
+  // For rollovers: each period the maturity amount becomes the new principal
+  const rolloverRows = [];
+  let runningPrincipal = p;
+  for (let i = 0; i < periods; i++) {
+    const interest  = (runningPrincipal * r / 100) / divisor;
+    const maturity  = runningPrincipal + interest;
+    rolloverRows.push({ period: i + 1, principal: runningPrincipal, interest, maturity });
+    runningPrincipal = maturity; // reinvest full amount each rollover
+  }
+  const totalInterest  = runningPrincipal - p;
+  const totalMaturity  = runningPrincipal;
+  const effectiveYield = p > 0 ? (totalInterest / p) * 100 : 0;
+
+  const fmtN = v => v.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const inputStyle = { ...S.input, marginBottom: 0 };
+  const selBtnStyle = (active) => ({
+    flex: 1, padding: "clamp(9px,2.5vw,12px) 6px", borderRadius: 10,
+    border: `1px solid ${active ? "var(--clr-accent)" : "var(--clr-border)"}`,
+    background: active ? "rgba(45,127,249,.15)" : "var(--clr-input-bg)",
+    color: active ? "var(--clr-accent)" : "var(--clr-text)",
+    fontWeight: 700, cursor: "pointer", fontSize: "var(--fs-sm)",
+    fontFamily: "'Brighter Sans', sans-serif",
+  });
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 60,
+      background: "rgba(0,0,0,.7)", display: "flex", alignItems: "flex-end",
+      justifyContent: "center",
+    }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        width: "100%", maxWidth: 640,
+        background: "var(--clr-card-alt)",
+        borderTopLeftRadius: "var(--radius-sheet)", borderTopRightRadius: "var(--radius-sheet)",
+        padding: "clamp(18px,5vw,28px) var(--gutter,18px) max(env(safe-area-inset-bottom,20px),36px)",
+        maxHeight: "92dvh", overflowY: "auto",
+        border: "1px solid var(--clr-border)",
+        boxShadow: "0 -8px 40px var(--clr-sheet-shadow)",
+      }}>
+        {/* Header */}
+        <div style={{ ...S.row, marginBottom: "var(--gap-md)" }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)" }}>🧮 T-Bill Calculator</div>
+            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 2 }}>Traditional formula with rollover support</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--clr-dim)", fontSize: "var(--fs-xl)", cursor: "pointer", lineHeight: 1, padding: 4 }}>✕</button>
+        </div>
+
+        {/* Capital */}
+        <div style={S.label}>Capital to Invest (GHS)</div>
+        <input style={{ ...inputStyle, marginBottom: "var(--gap-md)" }} type="number" placeholder="e.g. 10000"
+          value={capital} onChange={e => setCapital(e.target.value)} />
+
+        {/* Duration selector */}
+        <div style={S.label}>T-Bill Type</div>
+        <div style={{ display: "flex", gap: "var(--gap-sm)", marginBottom: "var(--gap-md)" }}>
+          {[["91","91-Day"],["182","182-Day"],["364","364-Day"]].map(([v, lbl]) => (
+            <button key={v} style={selBtnStyle(duration === v)} onClick={() => setDuration(v)}>{lbl}</button>
+          ))}
+        </div>
+
+        {/* Rate inputs — all three visible so user can prefill all and switch */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--gap-sm)", marginBottom: "var(--gap-md)" }}>
+          {[["91", rate91, setRate91], ["182", rate182, setRate182], ["364", rate364, setRate364]].map(([d, val, setter]) => (
+            <div key={d}>
+              <div style={{ ...S.label, marginBottom: 4 }}>{d}-Day Rate %</div>
+              <input style={{ ...inputStyle, border: `1px solid ${duration === d ? "var(--clr-accent)" : "var(--clr-border)"}`, background: duration === d ? "rgba(45,127,249,.06)" : "var(--clr-input-bg)" }}
+                type="number" placeholder="e.g. 28.5"
+                value={val} onChange={e => setter(e.target.value)} />
+            </div>
+          ))}
+        </div>
+
+        {/* Number of rollovers */}
+        <div style={S.label}>Number of Rollovers (investment periods)</div>
+        <div style={{ display: "flex", gap: "var(--gap-sm)", marginBottom: "var(--gap-md)" }}>
+          {["1","2","3","4","6","8"].map(v => (
+            <button key={v} style={{ ...selBtnStyle(rollovers === v), flex: "unset", minWidth: "clamp(34px,8vw,44px)", padding: "clamp(7px,2vw,10px) 6px" }}
+              onClick={() => setRollovers(v)}>{v}</button>
+          ))}
+          <input style={{ ...inputStyle, flex: 1, marginBottom: 0, textAlign: "center" }} type="number"
+            min="1" max="52" placeholder="or type"
+            value={["1","2","3","4","6","8"].includes(rollovers) ? "" : rollovers}
+            onChange={e => setRollovers(e.target.value)} />
+        </div>
+
+        {/* Results */}
+        {p > 0 && r > 0 && (
+          <>
+            {/* Summary hero */}
+            <div style={{ background: "rgba(0,200,83,.07)", border: "1px solid rgba(0,200,83,.2)", borderRadius: 12, padding: "clamp(12px,3vw,16px)", marginBottom: "var(--gap-md)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+                {[
+                  ["Capital",         `GHS ${fmtN(p)}`,             "var(--clr-text)"],
+                  ["Total Interest",  `+GHS ${fmtN(totalInterest)}`, "var(--clr-green)"],
+                  ["You Receive",     `GHS ${fmtN(totalMaturity)}`,  "var(--clr-text)"],
+                  ["Periods",         `${periods} × ${duration}d`,   "var(--clr-gold)"],
+                  ["Eff. Yield",      `${effectiveYield.toFixed(3)}%`,"var(--clr-accent)"],
+                  ["Per Period",      `+GHS ${fmtN(rolloverRows[0]?.interest ?? 0)}`, "var(--clr-green)"],
+                ].map(([lbl, val, clr]) => (
+                  <div key={lbl} style={{ padding: "8px 4px" }}>
+                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 4 }}>{lbl}</div>
+                    <div style={{ fontWeight: 800, fontSize: "var(--fs-base)", color: clr }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Rollover breakdown table */}
+            {periods > 1 && (
+              <>
+                <div style={{ ...S.label, marginBottom: 8 }}>Rollover Breakdown</div>
+                <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid var(--clr-border)", marginBottom: "var(--gap-md)" }}>
+                  {/* Table header */}
+                  <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 1fr 1fr", background: "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(6px,1.5vw,9px) clamp(8px,2vw,12px)" }}>
+                    {["#", "Principal", "Interest", "Maturity"].map(h => (
+                      <div key={h} style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.3, textTransform: "uppercase", textAlign: h === "#" ? "center" : "right" }}>{h}</div>
+                    ))}
+                  </div>
+                  {rolloverRows.map(row => (
+                    <div key={row.period} style={{ display: "grid", gridTemplateColumns: "44px 1fr 1fr 1fr", padding: "clamp(8px,2vw,11px) clamp(8px,2vw,12px)", borderBottom: "1px solid var(--clr-border)", background: row.period % 2 === 0 ? "var(--clr-card)" : "var(--clr-bg)" }}>
+                      <div style={{ textAlign: "center", fontWeight: 700, color: "var(--clr-gold)", fontSize: "var(--fs-sm)" }}>{row.period}</div>
+                      <div style={{ textAlign: "right", fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>{fmtN(row.principal)}</div>
+                      <div style={{ textAlign: "right", fontSize: "var(--fs-sm)", color: "var(--clr-green)", fontWeight: 600 }}>+{fmtN(row.interest)}</div>
+                      <div style={{ textAlign: "right", fontSize: "var(--fs-sm)", fontWeight: 700 }}>{fmtN(row.maturity)}</div>
+                    </div>
+                  ))}
+                  {/* Totals row */}
+                  <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 1fr 1fr", padding: "clamp(8px,2vw,11px) clamp(8px,2vw,12px)", background: "rgba(0,200,83,.07)", borderTop: "2px solid rgba(0,200,83,.25)" }}>
+                    <div style={{ textAlign: "center", fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1 }}>TOT</div>
+                    <div style={{ textAlign: "right", fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>{fmtN(p)}</div>
+                    <div style={{ textAlign: "right", fontSize: "var(--fs-sm)", color: "var(--clr-green)", fontWeight: 800 }}>+{fmtN(totalInterest)}</div>
+                    <div style={{ textAlign: "right", fontSize: "var(--fs-sm)", fontWeight: 800 }}>{fmtN(totalMaturity)}</div>
+                  </div>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {/* Empty state hint */}
+        {(p === 0 || r === 0) && (
+          <div style={{ textAlign: "center", color: "var(--clr-dim)", fontSize: "var(--fs-sm)", padding: "var(--gap-md) 0" }}>
+            Enter a capital amount and interest rate to see results.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function TBillsScreen({ tbills, hidden, tbillSheet, setTbillSheet, editingTbill, setEditingTbill,
   tbForm, setTbForm, saveTbill, deleteTbill, lightTheme, setLightTheme, setHidden }) {
+  const [showCalc, setShowCalc] = useState(false);
   const totalInvested  = tbills.reduce((s, x) => s + x.principal, 0);
   const totalMaturity  = tbills.reduce((s, x) => s + x.maturityAmount, 0);
   const totalEarnings  = totalMaturity - totalInvested;
   return (
     <div style={S.root}>
+      {showCalc && <TBillCalculator onClose={() => setShowCalc(false)} />}
       <div style={S.header}>
         <div style={{ ...S.row, alignItems: "flex-start" }}>
           <div>
@@ -774,6 +954,10 @@ function TBillsScreen({ tbills, hidden, tbillSheet, setTbillSheet, editingTbill,
           <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
             <button className="theme-btn" onClick={() => setLightTheme(t => !t)}>{lightTheme ? "🌙" : "☀️"}</button>
             <button className="eye-btn" onClick={() => setHidden(h => !h)}>{hidden ? <EyeOffIcon /> : <EyeIcon />}</button>
+            <button onClick={() => setShowCalc(true)}
+              style={{ background: "rgba(45,127,249,.12)", border: "1px solid rgba(45,127,249,.25)", color: "var(--clr-accent)", borderRadius: 10, padding: "clamp(5px,1.5vw,7px) clamp(9px,2.5vw,12px)", fontWeight: 700, fontSize: "var(--fs-sm)", cursor: "pointer", fontFamily: "'Brighter Sans', sans-serif", whiteSpace: "nowrap" }}>
+              🧮 Calc
+            </button>
           </div>
         </div>
       </div>
