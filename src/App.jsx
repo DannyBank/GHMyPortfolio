@@ -384,7 +384,7 @@ const GLOBAL_CSS = `
   /* ── Top border for the holdings list ── */
   .holdings-list {
     border-top: 1px solid var(--clr-border);
-    width: 97vw;
+    width: 98vw;
     max-width: 640px;
   }
 
@@ -534,6 +534,8 @@ const GLOBAL_CSS = `
     padding: clamp(11px,3vw,14px) var(--gutter,18px);
     border-bottom: 1px solid var(--clr-border);
     background: var(--clr-card);
+    width: 98vw;
+    max-width: 640px;
   }
   .market-row:first-child { border-top: 1px solid var(--clr-border); }
   .market-sym   { font-weight: 700; font-size: var(--fs-md); }
@@ -620,6 +622,8 @@ const GLOBAL_CSS = `
     border-bottom: 1px solid var(--clr-border);
     padding: clamp(14px,3.5vw,18px) var(--gutter,18px);
     cursor: default;
+    width: 98vw;
+    max-width: 640px;
   }
   .inv-card-title { font-weight: 700; font-size: var(--fs-lg); }
   .inv-card-sub   { font-size: var(--fs-sm); color: var(--clr-dim); margin-top: 2px; }
@@ -631,6 +635,8 @@ const GLOBAL_CSS = `
     border-top: 1px solid var(--clr-border);
     border-bottom: 1px solid var(--clr-border);
     background: var(--clr-card);
+    width: 98vw;
+    max-width: 640px;
   }
   .inv-stat {
     padding: clamp(10px,2.8vw,14px) var(--gutter,18px);
@@ -648,6 +654,8 @@ const GLOBAL_CSS = `
     grid-template-columns: 1fr 1fr;
     gap: clamp(8px,2vw,12px);
     padding: clamp(10px,2.5vw,14px) var(--gutter,18px);
+    width: 98vw;
+    max-width: 640px;
   }
   .summary-tile {
     background: var(--clr-card);
@@ -667,6 +675,8 @@ const GLOBAL_CSS = `
     padding: clamp(10px,2.8vw,13px) var(--gutter,18px);
     border-bottom: 1px solid var(--clr-border);
     background: var(--clr-card);
+    width: 98vw;
+    max-width: 640px;
   }
   .mf-entry-row:first-child { border-top: 1px solid var(--clr-border); }
 
