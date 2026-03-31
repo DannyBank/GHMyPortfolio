@@ -784,157 +784,281 @@ function EyeOffIcon() {
 
 // ─── Stock Analysis Screen ────────────────────────────────────────────────────
 function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
-  const [symbol,      setSymbol]      = useState("");
-  const [basePrice,   setBasePrice]   = useState("");   // price at start (e.g. 52-week low / IPO)
-  const [peakPrice,   setPeakPrice]   = useState("");   // all-time high / recent peak
-  const [currentPrice,setCurrentPrice]= useState("");   // today's price
-  const [sellVolume,  setSellVolume]  = useState("");   // outstanding sell orders on order book
-  const [dailyVolume, setDailyVolume] = useState("");   // total shares traded today
-  const [avgVolume,   setAvgVolume]   = useState("");   // average daily volume (optional)
-  const [showPct,     setShowPct]     = useState(false);
 
+  // ── Input state ───────────────────────────────────────────────────────────
+  const [symbol,        setSymbol]        = useState("");
+  const [basePrice,     setBasePrice]     = useState("");   // 52-week low / IPO / start
+  const [peakPrice,     setPeakPrice]     = useState("");   // all-time high / recent peak
+  const [currentPrice,  setCurrentPrice]  = useState("");   // last traded price
+  const [openPrice,     setOpenPrice]     = useState("");   // today's open
+  const [highPrice,     setHighPrice]     = useState("");   // today's high
+  const [lowPrice,      setLowPrice]      = useState("");   // today's low
+  const [prevClose,     setPrevClose]     = useState("");   // previous close
+  const [avgPrice,      setAvgPrice]      = useState("");   // today's avg traded price
+  const [buyPrice,      setBuyPrice]      = useState("");   // best bid on order book
+  const [buyVolume,     setBuyVolume]     = useState("");   // total buy volume on order book
+  const [sellPrice,     setSellPrice]     = useState("");   // best ask on order book
+  const [sellVolume,    setSellVolume]    = useState("");   // total sell volume on order book
+  const [dailyVolume,   setDailyVolume]   = useState("");   // total shares traded today
+  const [avgDailyVol,   setAvgDailyVol]  = useState("");   // average daily volume (optional)
+  const [downDays,      setDownDays]      = useState("");   // consecutive down days (optional)
+  const [weekHigh,      setWeekHigh]      = useState("");   // 52-week high (if different from peak)
+  const [weekLow,       setWeekLow]       = useState("");   // 52-week low (if different from base)
+
+  // ── Parse inputs ──────────────────────────────────────────────────────────
   const base    = parseFloat(basePrice)    || 0;
   const peak    = parseFloat(peakPrice)    || 0;
   const cur     = parseFloat(currentPrice) || 0;
+  const open    = parseFloat(openPrice)    || 0;
+  const high    = parseFloat(highPrice)    || 0;
+  const low     = parseFloat(lowPrice)     || 0;
+  const prev    = parseFloat(prevClose)    || 0;
+  const avgPx   = parseFloat(avgPrice)     || 0;
+  const buyPx   = parseFloat(buyPrice)     || 0;
+  const buyVol  = parseFloat(buyVolume)    || 0;
+  const sellPx  = parseFloat(sellPrice)    || 0;
   const sellVol = parseFloat(sellVolume)   || 0;
   const dayVol  = parseFloat(dailyVolume)  || 0;
-  const avgVol  = parseFloat(avgVolume)    || 0;
-  const ready   = base > 0 && peak > 0 && cur > 0 && peak > base;
+  const avgVol  = parseFloat(avgDailyVol)  || 0;
+  const dwnDays = parseInt(downDays)       || 0;
+  const wkHigh  = parseFloat(weekHigh)     || peak;
+  const wkLow   = parseFloat(weekLow)      || base;
 
-  // ── Core metrics ──────────────────────────────────────────────────────────
-  const totalRally      = peak  - base;
+  const ready = base > 0 && peak > 0 && cur > 0 && peak > base;
+
+  // ── Core price metrics ────────────────────────────────────────────────────
+  const totalRally      = peak - base;
   const rallyPct        = (totalRally / base) * 100;
-  const drawdown        = peak  - cur;
+  const drawdown        = peak - cur;
   const drawdownPct     = (drawdown / peak) * 100;
-  const gainFromBase    = cur   - base;
+  const gainFromBase    = cur - base;
   const gainFromBasePct = (gainFromBase / base) * 100;
 
-  // ── Fibonacci retracement levels (from base to peak) ──────────────────────
-  const fibLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1].map(f => ({
-    label: `${(f * 100).toFixed(1)}%`,
-    price: peak - f * totalRally,
-    ratio: f,
-  }));
+  // Day metrics
+  const dayChange      = prev > 0 ? cur - prev : 0;
+  const dayChangePct   = prev > 0 ? (dayChange / prev) * 100 : 0;
+  const dayRange       = high > 0 && low > 0 ? high - low : 0;
+  const rangePosition  = dayRange > 0 ? ((cur - low) / dayRange) * 100 : null;
 
-  // ── Volume pressure analysis ───────────────────────────────────────────────
-  // Days to absorb sell overhang at current daily volume
-  const daysToAbsorb    = dayVol > 0 ? sellVol / dayVol : null;
-  // Volume ratio: today vs average (if provided)
-  const volRatio        = avgVol > 0 ? dayVol / avgVol : null;
-  // Sell overhang as multiple of daily volume
-  const overhangMultiple= dayVol > 0 ? (sellVol / dayVol).toFixed(1) : null;
+  // Special day pattern detections
+  const isGapDown      = open > 0 && prev > 0 && open < prev * 0.99;  // opened >1% below prev close
+  const isGapUp        = open > 0 && prev > 0 && open > prev * 1.01;
+  const isLockLimit    = high > 0 && low > 0 && Math.abs(high - low) < 0.01; // high == low: zero intraday range
+  const isWeakClose    = high > 0 && low > 0 && cur > 0 && dayRange > 0 && ((cur - low) / dayRange) < 0.2; // closing in bottom 20% of range
+  const isStrongClose  = dayRange > 0 && ((cur - low) / dayRange) > 0.8;
+  const avgAboveCur    = avgPx > 0 && avgPx > cur; // avg traded price above current = late sellers drove price down
+
+  // 52-week positioning
+  const wkRange        = wkHigh - wkLow;
+  const wkPosition     = wkRange > 0 ? ((cur - wkLow) / wkRange) * 100 : null; // 0% = at 52w low, 100% = at 52w high
+
+  // ── Order book analysis ───────────────────────────────────────────────────
+  const hasBuyers      = buyVol > 0 && buyPx > 0;
+  const hasSellers     = sellVol > 0;
+  const buySellRatio   = (buyVol > 0 && sellVol > 0) ? buyVol / sellVol : 0;
+  const orderImbalance = (buyVol + sellVol) > 0 ? ((sellVol - buyVol) / (buyVol + sellVol)) * 100 : null;
+  const spread         = (buyPx > 0 && sellPx > 0) ? sellPx - buyPx : null;
+  const spreadPct      = (spread !== null && buyPx > 0) ? (spread / buyPx) * 100 : null;
+
+  // ── Volume analysis ───────────────────────────────────────────────────────
+  const daysToAbsorb   = dayVol > 0 && sellVol > 0 ? sellVol / dayVol : null;
+  const volRatio       = avgVol > 0 ? dayVol / avgVol : null;
+  const overhangMult   = dayVol > 0 && sellVol > 0 ? (sellVol / dayVol).toFixed(1) : null;
+
+  // ── Fibonacci retracement (base → peak) ──────────────────────────────────
+  const fibLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1].map(f => ({
+    label: `${(f * 100).toFixed(1)}%`, price: peak - f * totalRally, ratio: f,
+  }));
+  const fib236 = peak - 0.236 * totalRally;
+  const fib382 = peak - 0.382 * totalRally;
+  const fib500 = peak - 0.500 * totalRally;
+  const fib618 = peak - 0.618 * totalRally;
+  const fib786 = peak - 0.786 * totalRally;
+  const nearestFib = ready ? fibLevels.slice(1).reduce((best, f) =>
+    Math.abs(f.price - cur) < Math.abs(best.price - cur) ? f : best
+  ) : null;
 
   // ── Signal scoring (0–100) ────────────────────────────────────────────────
-  // Score improves when: price near strong fib, overhang shrinking, volume picks up
   let score = 50;
-
-  // Drawdown positioning relative to key fibs
+  const scoreFactors = []; // collect explanations for transparency
   if (ready) {
-    const fib382 = peak - 0.382 * totalRally;
-    const fib500 = peak - 0.500 * totalRally;
-    const fib618 = peak - 0.618 * totalRally;
-    const fib786 = peak - 0.786 * totalRally;
+    // 1. Fibonacci position
+    if      (cur <= fib786) { score += 22; scoreFactors.push(["Deep fib zone (78.6%+)", +22, "green"]); }
+    else if (cur <= fib618) { score += 16; scoreFactors.push(["Golden ratio zone (61.8%)", +16, "green"]); }
+    else if (cur <= fib500) { score += 8;  scoreFactors.push(["Mid fib zone (50%)", +8, "gold"]); }
+    else if (cur <= fib382) { score += 2;  scoreFactors.push(["Shallow fib (38.2%)", +2, "gold"]); }
+    else                    { score -= 10; scoreFactors.push(["Above 38.2% — shallow pullback", -10, "red"]); }
 
-    if (cur <= fib618)       score += 18;  // deep retracement — potential value
-    else if (cur <= fib500)  score += 10;
-    else if (cur <= fib382)  score += 4;
-    else                     score -= 8;   // shallow — may fall further
+    // 2. Order book — zero buyers is the most bearish signal possible
+    if (!hasBuyers && buyPx === 0) {
+      score -= 22; scoreFactors.push(["Zero buy orders (no floor)", -22, "red"]);
+    } else if (!hasBuyers) {
+      score -= 14; scoreFactors.push(["No buy volume on book", -14, "red"]);
+    } else {
+      if      (buySellRatio >= 2)   { score += 14; scoreFactors.push(["Buy vol > 2× sell vol", +14, "green"]); }
+      else if (buySellRatio >= 1)   { score += 8;  scoreFactors.push(["Buy vol ≥ sell vol", +8, "green"]); }
+      else if (buySellRatio >= 0.5) { score += 2;  scoreFactors.push(["Some buy support", +2, "gold"]); }
+      else                          { score -= 8;  scoreFactors.push(["Sell vol dominates book", -8, "red"]); }
+    }
 
-    // Sell overhang penalty
+    // 3. Sell overhang
     if (daysToAbsorb !== null) {
-      if (daysToAbsorb > 100) score -= 25;
-      else if (daysToAbsorb > 50) score -= 15;
-      else if (daysToAbsorb > 20) score -= 8;
-      else if (daysToAbsorb > 5)  score -= 2;
-      else                        score += 10; // nearly absorbed
+      if      (daysToAbsorb > 100) { score -= 24; scoreFactors.push(["Sell wall >100 days to clear", -24, "red"]); }
+      else if (daysToAbsorb > 50)  { score -= 16; scoreFactors.push(["Sell wall 50–100 days", -16, "red"]); }
+      else if (daysToAbsorb > 20)  { score -= 8;  scoreFactors.push(["Sell wall 20–50 days", -8, "gold"]); }
+      else if (daysToAbsorb > 5)   { score -= 2;  scoreFactors.push(["Sell wall 5–20 days", -2, "gold"]); }
+      else                         { score += 8;  scoreFactors.push(["Sell wall nearly cleared", +8, "green"]); }
     }
 
-    // Volume momentum bonus
+    // 4. Day change severity
+    if (prev > 0) {
+      if      (dayChangePct < -8)  { score -= 14; scoreFactors.push([`Heavy distribution (${dayChangePct.toFixed(1)}%)`, -14, "red"]); }
+      else if (dayChangePct < -4)  { score -= 7;  scoreFactors.push([`Down day (${dayChangePct.toFixed(1)}%)`, -7, "red"]); }
+      else if (dayChangePct < -1)  { score -= 2;  scoreFactors.push([`Slight decline (${dayChangePct.toFixed(1)}%)`, -2, "gold"]); }
+      else if (dayChangePct > 3)   { score += 6;  scoreFactors.push([`Up day (+${dayChangePct.toFixed(1)}%)`, +6, "green"]); }
+      else if (dayChangePct > 1)   { score += 2;  scoreFactors.push([`Slight gain (+${dayChangePct.toFixed(1)}%)`, +2, "green"]); }
+    }
+
+    // 5. Gap down — aggressive selling from the open
+    if (isGapDown) { score -= 8; scoreFactors.push(["Gap down from prev close", -8, "red"]); }
+    if (isGapUp)   { score += 4; scoreFactors.push(["Gap up from prev close", +4, "green"]); }
+
+    // 6. Lock limit / zero intraday range — trapped sellers, no buyers
+    if (isLockLimit && !hasBuyers) { score -= 10; scoreFactors.push(["Zero range day + no buyers", -10, "red"]); }
+
+    // 7. Weak/strong close relative to day range
+    if (isWeakClose)  { score -= 6; scoreFactors.push(["Closing near day low (weak)", -6, "red"]); }
+    if (isStrongClose){ score += 5; scoreFactors.push(["Closing near day high (strong)", +5, "green"]); }
+
+    // 8. Avg price > current — sellers dominated the session
+    if (avgAboveCur)  { score -= 5; scoreFactors.push(["Avg price > current (late selling)", -5, "red"]); }
+
+    // 9. Volume vs average
     if (volRatio !== null) {
-      if (volRatio >= 2)    score += 12;
-      else if (volRatio >= 1.2) score += 5;
-      else if (volRatio < 0.5)  score -= 8;
+      if      (volRatio >= 3)   { score += 8;  scoreFactors.push(["Volume 3× average (climax?)", +8, "gold"]); }
+      else if (volRatio >= 1.5) { score += 4;  scoreFactors.push(["Above-average volume", +4, "gold"]); }
+      else if (volRatio < 0.5)  { score -= 5;  scoreFactors.push(["Below-average volume (weak)", -5, "red"]); }
     }
 
-    // Price bounce from base
-    if (gainFromBasePct > 100) score += 5;  // still well above origin — healthy stock
+    // 10. Consecutive down days — exhaustion can be a contrarian signal after many days
+    if (dwnDays >= 10) { score += 5;  scoreFactors.push([`${dwnDays} consecutive down days (exhaustion?)`, +5, "gold"]); }
+    else if (dwnDays >= 5)  { score -= 4;  scoreFactors.push([`${dwnDays} consecutive down days`, -4, "red"]); }
+    else if (dwnDays >= 2)  { score -= 2;  scoreFactors.push([`${dwnDays} consecutive down days`, -2, "red"]); }
 
-    // Price too close to peak — risk of further selling
-    if (drawdownPct < 15) score -= 15;
+    // 11. 52-week positioning
+    if (wkPosition !== null) {
+      if      (wkPosition < 15)  { score += 8;  scoreFactors.push(["Near 52-week low (value zone)", +8, "green"]); }
+      else if (wkPosition < 30)  { score += 4;  scoreFactors.push(["Low end of 52-week range", +4, "gold"]); }
+      else if (wkPosition > 85)  { score -= 8;  scoreFactors.push(["Near 52-week high (risky)", -8, "red"]); }
+    }
+
+    // 12. Price too close to peak — distribution risk
+    if      (drawdownPct < 5)  { score -= 20; scoreFactors.push(["< 5% from peak (overbought)", -20, "red"]); }
+    else if (drawdownPct < 15) { score -= 10; scoreFactors.push(["< 15% from peak (elevated)", -10, "red"]); }
 
     score = Math.max(0, Math.min(100, score));
   }
 
   // ── Verdict ───────────────────────────────────────────────────────────────
   const verdict = !ready ? null :
-    score >= 72 ? { label: "Strong Buy Zone",   color: "#00c853", bg: "rgba(0,200,83,.12)",  icon: "▲▲" } :
-    score >= 58 ? { label: "Cautious Buy",       color: "#69f0ae", bg: "rgba(105,240,174,.1)", icon: "▲" } :
-    score >= 44 ? { label: "Watch & Wait",       color: "#f5a623", bg: "rgba(245,166,35,.12)", icon: "◆" } :
-    score >= 30 ? { label: "Likely More Downside",color: "#ff6b35", bg: "rgba(255,107,53,.12)", icon: "▼" } :
-                  { label: "Avoid for Now",       color: "#f5222d", bg: "rgba(245,34,45,.12)",  icon: "▼▼" };
+    score >= 72 ? { label: "Strong Buy Zone",    color: "#00c853", bg: "rgba(0,200,83,.13)",   icon: "▲▲" } :
+    score >= 58 ? { label: "Cautious Buy",        color: "#69f0ae", bg: "rgba(105,240,174,.1)", icon: "▲"  } :
+    score >= 44 ? { label: "Watch & Wait",        color: "#f5a623", bg: "rgba(245,166,35,.13)", icon: "◆"  } :
+    score >= 30 ? { label: "Likely More Downside",color: "#ff6b35", bg: "rgba(255,107,53,.12)", icon: "▼"  } :
+                  { label: "Avoid / High Risk",   color: "#f5222d", bg: "rgba(245,34,45,.13)",  icon: "▼▼" };
 
-  // ── Insights (contextual text) ────────────────────────────────────────────
+  // ── Price targets ─────────────────────────────────────────────────────────
+  const sl  = cur * 0.93;
+  const tp2 = fib382;
+  const tp3 = peak;
+
+  // ── Insights ──────────────────────────────────────────────────────────────
   const insights = [];
   if (ready) {
-    const fib618price = (peak - 0.618 * totalRally).toFixed(2);
-    const fib500price = (peak - 0.500 * totalRally).toFixed(2);
-    const fib382price = (peak - 0.382 * totalRally).toFixed(2);
-
     // Rally context
     insights.push({
-      icon: "📈", title: "Rally Context",
-      body: `${symbol || "This stock"} rallied ${rallyPct.toFixed(0)}% from GHS ${base.toFixed(2)} to GHS ${peak.toFixed(2)} — a ${rallyPct > 300 ? "parabolic" : rallyPct > 150 ? "strong" : "moderate"} move. Pullbacks after ${rallyPct > 200 ? "parabolic" : "strong"} rallies typically retrace 38–61.8% of the move before finding support.`
+      icon: "📈", title: "Rally & Retracement Context",
+      body: `${symbol || "This stock"} rallied ${rallyPct.toFixed(0)}% from GHS ${base.toFixed(2)} to GHS ${peak.toFixed(2)} — a ${rallyPct > 400 ? "parabolic" : rallyPct > 200 ? "very strong" : rallyPct > 100 ? "strong" : "moderate"} move. It has now retraced ${drawdownPct.toFixed(1)}% from the peak. ${drawdownPct >= 61.8 ? "This is a deep retracement into the golden ratio zone — historically a high-probability reversal area, but only valid if buyers begin to show up." : drawdownPct >= 50 ? "Price is at the midpoint retracement. Watch whether it holds or continues to the 61.8% level." : drawdownPct >= 38.2 ? "At the 38.2% fib — the first meaningful support. A hold here signals strength; a break points to 50% or 61.8%." : "The retracement is still shallow. Further downside toward the 38.2–61.8% zone is likely before a real base forms."}`
     });
 
-    // Fib support context
-    const nearestFib = fibLevels.slice(1).reduce((best, f) =>
-      Math.abs(f.price - cur) < Math.abs(best.price - cur) ? f : best
-    );
+    // Order book reading
     insights.push({
-      icon: "📐", title: "Fibonacci Position",
-      body: `Current price GHS ${cur.toFixed(2)} is closest to the ${nearestFib.label} retracement level (GHS ${nearestFib.price.toFixed(2)}). Key support zones: 38.2% at GHS ${fib382price}, 50% at GHS ${fib500price}, 61.8% (golden ratio) at GHS ${fib618price}. The 61.8% level is the strongest magnet for price in a healthy pullback.`
+      icon: "📋", title: "Order Book Reading",
+      body: !hasBuyers
+        ? `No buy orders on the order book (Buy: 0.00, Vol: 0). This is the most critical warning signal — zero bids means no institutional or retail buyer is willing to step in at current levels. ${isLockLimit ? "Combined with a zero intraday range (High = Low = Current), this indicates a locked-limit down scenario where the price simply fell with no support whatsoever." : ""} ${sellVol > 0 ? `There are still ${sellVol.toLocaleString()} shares queued on the sell side at GHS ${sellPx > 0 ? sellPx.toFixed(2) : cur.toFixed(2)}. Until meaningful buy volume appears on the order book, the price has no floor.` : ""}`
+        : `Buy volume of ${buyVol.toLocaleString()} at GHS ${buyPx.toFixed(2)} vs sell volume of ${sellVol.toLocaleString()} at GHS ${sellPx > 0 ? sellPx.toFixed(2) : cur.toFixed(2)}. The buy/sell ratio is ${buySellRatio.toFixed(2)} — ${buySellRatio >= 1 ? "buyers are matching sellers, a constructive sign." : buySellRatio >= 0.5 ? "sellers still outnumber buyers but some support is emerging." : "sellers heavily dominate — caution required."}`
     });
 
-    // Volume overhang
-    if (daysToAbsorb !== null) {
-      const urgency = daysToAbsorb > 100 ? "extremely heavy" : daysToAbsorb > 50 ? "very heavy" : daysToAbsorb > 20 ? "significant" : daysToAbsorb > 5 ? "moderate" : "light";
+    // Today's price action with candle interpretation
+    if (prev > 0 || open > 0) {
+      let candleType = "";
+      if (isLockLimit && dayChangePct < -3) candleType = "📛 Lock-limit down — price fell with zero intraday recovery, no buyers engaged.";
+      else if (isGapDown && isWeakClose) candleType = "📛 Gap-down bearish candle — opened below previous close and continued falling.";
+      else if (isGapDown) candleType = "⚠️ Gap-down open — bearish start, check if recovered.";
+      else if (isWeakClose) candleType = "🔴 Bearish candle — closed near session lows, sellers in control.";
+      else if (isStrongClose) candleType = "🟢 Bullish candle — closed near session highs, buyers stepped in.";
+      else candleType = "🟡 Indecisive session — neither side took clear control.";
       insights.push({
-        icon: "📊", title: "Sell Overhang",
-        body: `With ${sellVol.toLocaleString()} shares sitting on the ask and only ${dayVol.toLocaleString()} traded today, the sell overhang is ${urgency} — it would take roughly ${daysToAbsorb > 1 ? Math.round(daysToAbsorb) + " trading days" : "less than a day"} to absorb at this volume. ${daysToAbsorb > 30 ? "This is a major red flag — avoid entering until the overhang starts shrinking materially." : daysToAbsorb > 10 ? "Watch for the order book to thin out before committing capital." : "The supply situation is manageable but still needs monitoring."}`
+        icon: dayChangePct < -5 ? "🔴" : dayChangePct < 0 ? "🟡" : "🟢",
+        title: "Today's Price Action",
+        body: `${candleType} Opened GHS ${open > 0 ? open.toFixed(2) : prev.toFixed(2)}, prev close GHS ${prev.toFixed(2)}. Currently ${dayChangePct < 0 ? "down" : "up"} ${Math.abs(dayChangePct).toFixed(2)}% (GHS ${Math.abs(dayChange).toFixed(2)}).${dayRange > 0 ? ` Day range: GHS ${low.toFixed(2)} – GHS ${high.toFixed(2)}.` : ""} ${avgAboveCur ? `Avg traded price of GHS ${avgPx.toFixed(2)} is above current price — this means the average seller today got a better price than current, indicating continued downward pressure into the close.` : avgPx > 0 ? `Avg traded price of GHS ${avgPx.toFixed(2)} is at or below current — buyers late in the session absorbed some supply.` : ""}`
       });
     }
 
-    // Buy/sell decision
-    const fib618 = peak - 0.618 * totalRally;
+    // Volume overhang
+    if (daysToAbsorb !== null) {
+      insights.push({
+        icon: "📊", title: "Sell Overhang Analysis",
+        body: `${sellVol.toLocaleString()} shares on the ask vs ${dayVol.toLocaleString()} traded today. At this pace it would take ~${Math.round(daysToAbsorb)} trading days (${overhangMult}× daily volume) to clear the sell wall. ${daysToAbsorb > 50 ? "This is an extreme overhang that will suppress any price recovery. Every bounce attempt will be sold into. The market is in active distribution — sellers are systematically exiting." : daysToAbsorb > 20 ? "Heavy overhang. Wait for it to shrink to under 10× daily volume before even considering an entry." : daysToAbsorb > 5 ? "Manageable but still needs monitoring. Look for the overhang shrinking on consecutive sessions before entering." : "Light overhang — supply nearly resolved, which is constructive."}`
+      });
+    }
+
+    // Consecutive down days insight
+    if (dwnDays >= 3) {
+      const exhaustion = dwnDays >= 8;
+      insights.push({
+        icon: exhaustion ? "🔄" : "📉",
+        title: exhaustion ? "Possible Selling Exhaustion" : "Consecutive Down Days",
+        body: exhaustion
+          ? `${dwnDays} consecutive down days is an unusually long streak that can mark the late stage of a distribution/selling wave. While this is not a buy signal on its own — you need buy volume to confirm — extended sell streaks sometimes precede sharp technical bounces as short sellers cover and bargain hunters enter. Watch for a day where volume spikes AND the price closes above its open.`
+          : `${dwnDays} consecutive down days indicates active distribution. Sellers are consistently in control session after session. Avoid trying to catch the bottom until there is a clear break in this pattern.`
+      });
+    }
+
+    // Fib support map
     insights.push({
-      icon: score >= 58 ? "✅" : score >= 44 ? "⏳" : "⛔",
-      title: score >= 58 ? "Entry Consideration" : score >= 44 ? "Patience Recommended" : "Wait for Better Setup",
-      body: score >= 72
-        ? `Price is in a strong value zone near key Fibonacci support. If you see buy orders beginning to appear on the order book and volume picking up, this could be a good entry. Consider scaling in rather than going all-in.`
-        : score >= 58
-        ? `Price is approaching an interesting level but the sell overhang remains a concern. Consider a small initial position and add only if volume improves and the overhang shrinks.`
-        : score >= 44
-        ? `Not yet. The balance between supply and demand still favours sellers. Watch the order book daily — wait for sell volume to drop below ${Math.round(dayVol * 10).toLocaleString()} and for buy bids to appear before acting.`
-        : `The weight of sell orders versus buying interest makes entry too risky here. ${cur > fib618 ? `A drop toward GHS ${fib618.toFixed(2)} (61.8% fib) would represent a much better risk/reward entry.` : "Wait for clear signs of accumulation before committing."}`
+      icon: "📐", title: "Key Support Levels to Watch",
+      body: `Fibonacci support from GHS ${base.toFixed(2)} → GHS ${peak.toFixed(2)}: 38.2% at GHS ${fib382.toFixed(2)}, 50% at GHS ${fib500.toFixed(2)}, 61.8% (golden ratio) at GHS ${fib618.toFixed(2)}, 78.6% at GHS ${fib786.toFixed(2)}. ${cur < fib618 ? `Price has broken below the golden ratio — this is deep value territory technically, but the lack of buyers means the level hasn't been confirmed as support yet. A close above GHS ${fib618.toFixed(2)} on above-average volume would be the first constructive signal.` : cur < fib500 ? `Price is between the 50% and 61.8% levels. Watch the 61.8% at GHS ${fib618.toFixed(2)} as the next key test.` : cur < fib382 ? `Below the 38.2% level. Next support zones: GHS ${fib500.toFixed(2)} (50%) and GHS ${fib618.toFixed(2)} (61.8%).` : `Price is still above the 38.2% retracement at GHS ${fib382.toFixed(2)} — further downside is likely.`}`
     });
 
-    // Take profit / stop loss if holding
-    const tp1 = peak * 0.9;
-    const tp2 = peak;
-    const sl  = cur * 0.93; // 7% trailing stop
+    // Entry recommendation
     insights.push({
-      icon: "🎯", title: "Price Targets (if entering)",
-      body: `Conservative target: GHS ${tp1.toFixed(2)} (~90% of peak). Full target: GHS ${tp2.toFixed(2)} (prior peak). Suggested stop-loss: GHS ${sl.toFixed(2)} (~7% below current price). Always size your position so a stop-loss hit is manageable within your overall portfolio.`
+      icon: score >= 58 ? "✅" : score >= 44 ? "⏳" : "⛔",
+      title: score >= 58 ? "Entry Consideration" : score >= 44 ? "Wait for Confirmation" : "Do Not Enter Yet",
+      body: score >= 72
+        ? `Price is near strong Fibonacci support and the sell overhang is manageable. Watch for buy orders to appear on the order book — that is your green light. Consider scaling in 25–30% of your intended position now, adding more on confirmation.`
+        : score >= 58
+        ? `Approaching an interesting level but risk remains. Wait for: (1) buy volume to appear on the order book, (2) a day that closes above its open, (3) the sell overhang shrinking on consecutive sessions. Only then consider a small entry.`
+        : score >= 44
+        ? `Not yet. Three things must change: (1) buy orders need to reappear at meaningful size, (2) the sell overhang must shrink materially, (3) a day where price gaps up or closes strongly. Set an alert at GHS ${fib618.toFixed(2)} (61.8% fib) and wait for those signals.`
+        : `High risk — stay away. ${!hasBuyers ? "Zero buy orders means there is literally no visible floor under this price." : ""} ${isLockLimit ? "A zero-range day where the price simply fell with no buyers is a capitulation signal that may not be finished." : ""} The weight of evidence says to watch from the sidelines. A flush toward GHS ${fib618.toFixed(2)}–GHS ${fib786.toFixed(2)} is possible before any base forms. Missing the first 10–15% of a recovery is far better than catching a falling stock.`
+    });
+
+    // Price targets
+    insights.push({
+      icon: "🎯", title: "Price Targets & Risk Management",
+      body: `If entering at GHS ${cur.toFixed(2)}: Stop-loss at GHS ${sl.toFixed(2)} (−7%). Conservative target: GHS ${tp2.toFixed(2)} (38.2% fib recovery, +${((tp2/cur - 1)*100).toFixed(1)}%). Full recovery target: GHS ${tp3.toFixed(2)} (prior peak, +${((tp3/cur - 1)*100).toFixed(1)}%). Risk/reward at conservative target: 1:${Math.max(0, (tp2 - cur) / Math.max(0.01, cur - sl)).toFixed(1)}. Always size your position so that hitting your stop-loss represents a loss you can absorb within your overall portfolio.`
     });
   }
 
   const fmtN = v => v.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const inputStyle = { ...S.input, marginBottom: 0 };
-
+  const fieldLabel = txt => <div style={{ ...S.label, marginBottom: 3 }}>{txt}</div>;
+  const sectionHdr = txt => <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2, marginTop: 2 }}>{txt}</div>;
   return (
     <div style={S.root}>
       {/* Header */}
-      <div style={S.header}>
+      <div style={{ ...S.header, position: "sticky", top: 0, background: "var(--clr-bg)", zIndex: 10, boxShadow: "0 2px 12px var(--clr-shadow)" }}>
         <div style={{ ...S.row, alignItems: "flex-start" }}>
           <div>
             <div style={S.label}>IC Securities</div>
@@ -947,82 +1071,136 @@ function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
         </div>
       </div>
 
-      {/* Input panel */}
-      <div style={{ padding: "0 var(--gutter,18px) var(--gap-md)", borderBottom: `1px solid var(--clr-border)` }}>
+      {/* ── INPUT SECTION ── */}
+      <div style={{ padding: "var(--gap-md) var(--gutter,18px)", borderBottom: `1px solid var(--clr-border)`, display: "flex", flexDirection: "column", gap: "var(--gap-sm)" }}>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)", marginBottom: "var(--gap-sm)" }}>
-          <div>
-            <div style={S.label}>Symbol (optional)</div>
-            <input style={inputStyle} placeholder="e.g. MTNGH" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} />
+        {/* Row 1: Symbol + Current Price */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
+          <div>{fieldLabel("Symbol (optional)")}
+            <input style={inputStyle} placeholder="e.g. GCB" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} />
           </div>
-          <div>
-            <div style={S.label}>Current Price (GHS)</div>
-            <input style={inputStyle} type="number" placeholder="e.g. 4.09" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} />
+          <div>{fieldLabel("Current Price (GHS)")}
+            <input style={inputStyle} type="number" placeholder="e.g. 27.06" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} />
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)", marginBottom: "var(--gap-sm)" }}>
-          <div>
-            <div style={S.label}>Base / Start Price (GHS)</div>
-            <input style={inputStyle} type="number" placeholder="e.g. 1.20" value={basePrice} onChange={e => setBasePrice(e.target.value)} />
+        {/* Row 2: Base + Peak */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
+          <div>{fieldLabel("Base / 52W Low (GHS)")}
+            <input style={inputStyle} type="number" placeholder="e.g. 7.00" value={basePrice} onChange={e => setBasePrice(e.target.value)} />
           </div>
-          <div>
-            <div style={S.label}>Peak Price (GHS)</div>
-            <input style={inputStyle} type="number" placeholder="e.g. 6.99" value={peakPrice} onChange={e => setPeakPrice(e.target.value)} />
+          <div>{fieldLabel("Peak / 52W High (GHS)")}
+            <input style={inputStyle} type="number" placeholder="e.g. 52.00" value={peakPrice} onChange={e => setPeakPrice(e.target.value)} />
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--gap-sm)", marginBottom: "var(--gap-sm)" }}>
-          <div>
-            <div style={S.label}>Sell Overhang</div>
-            <input style={inputStyle} type="number" placeholder="e.g. 260000" value={sellVolume} onChange={e => setSellVolume(e.target.value)} />
+        {/* Row 3: Today's stats — open, high, low, prev close, avg price */}
+        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Today's Statistics</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--gap-sm)" }}>
+          <div>{fieldLabel("Open")}
+            <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={openPrice} onChange={e => setOpenPrice(e.target.value)} />
           </div>
-          <div>
-            <div style={S.label}>Today's Volume</div>
-            <input style={inputStyle} type="number" placeholder="e.g. 2500" value={dailyVolume} onChange={e => setDailyVolume(e.target.value)} />
+          <div>{fieldLabel("High")}
+            <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={highPrice} onChange={e => setHighPrice(e.target.value)} />
           </div>
-          <div>
-            <div style={S.label}>Avg Daily Vol</div>
-            <input style={inputStyle} type="number" placeholder="optional" value={avgVolume} onChange={e => setAvgVolume(e.target.value)} />
+          <div>{fieldLabel("Low")}
+            <input style={inputStyle} type="number" placeholder="e.g. 27.06" value={lowPrice} onChange={e => setLowPrice(e.target.value)} />
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
+          <div>{fieldLabel("Prev. Close")}
+            <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={prevClose} onChange={e => setPrevClose(e.target.value)} />
+          </div>
+          <div>{fieldLabel("Avg. Price")}
+            <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={avgPrice} onChange={e => setAvgPrice(e.target.value)} />
+          </div>
+        </div>
+
+        {/* Row 4: Order book */}
+        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Order Book</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "var(--gap-sm)" }}>
+          <div>{fieldLabel("Buy Price")}
+            <input style={inputStyle} type="number" placeholder="e.g. 0.00" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} />
+          </div>
+          <div>{fieldLabel("Buy Vol.")}
+            <input style={inputStyle} type="number" placeholder="e.g. 0" value={buyVolume} onChange={e => setBuyVolume(e.target.value)} />
+          </div>
+          <div>{fieldLabel("Sell Price")}
+            <input style={inputStyle} type="number" placeholder="e.g. 27.06" value={sellPrice} onChange={e => setSellPrice(e.target.value)} />
+          </div>
+          <div>{fieldLabel("Sell Vol.")}
+            <input style={inputStyle} type="number" placeholder="e.g. 91099" value={sellVolume} onChange={e => setSellVolume(e.target.value)} />
+          </div>
+        </div>
+
+        {/* Row 5: Volume */}
+        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Volume</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
+          <div>{fieldLabel("Volume Traded Today")}
+            <input style={inputStyle} type="number" placeholder="e.g. 21300" value={dailyVolume} onChange={e => setDailyVolume(e.target.value)} />
+          </div>
+          <div>{fieldLabel("Avg. Daily Vol (optional)")}
+            <input style={inputStyle} type="number" placeholder="e.g. 15000" value={avgDailyVol} onChange={e => setAvgDailyVol(e.target.value)} />
           </div>
         </div>
 
         {!ready && (
-          <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: "var(--gap-sm)", textAlign: "center" }}>
+          <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", textAlign: "center", padding: "var(--gap-sm) 0" }}>
             Fill in Base Price, Peak Price and Current Price to generate analysis.
           </div>
         )}
       </div>
 
+      {/* ── RESULTS ── */}
       {ready && (
         <>
           {/* Verdict hero */}
           <div style={{ ...S.hero, margin: "clamp(8px,2vw,14px) var(--gutter,18px)" }}>
-            <div style={S.label}>{symbol || "Stock"} · Signal</div>
-            <div style={{ marginTop: 8, marginBottom: 12 }}>
-              <span className="signal-badge" style={{ background: verdict.bg, color: verdict.color }}>
-                {verdict.icon} {verdict.label}
-              </span>
-            </div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-              {/* Score bar */}
-              <div style={{ flex: 1, height: 8, borderRadius: 4, background: "rgba(255,255,255,.08)", overflow: "hidden" }}>
-                <div style={{ width: `${score}%`, height: "100%", borderRadius: 4, background: verdict.color, transition: "width .4s" }} />
+            <div style={{ ...S.row, marginBottom: 10 }}>
+              <div>
+                <div style={S.label}>{symbol || "Stock"} · Signal</div>
+                <span className="signal-badge" style={{ background: verdict.bg, color: verdict.color, marginTop: 6, display: "inline-flex" }}>
+                  {verdict.icon} {verdict.label}
+                </span>
               </div>
-              <div style={{ fontWeight: 800, fontSize: "var(--fs-sm)", color: verdict.color, minWidth: 36, textAlign: "right" }}>{score}/100</div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginBottom: 4 }}>Score</div>
+                <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 900, color: verdict.color }}>{score}</div>
+                <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>/100</div>
+              </div>
             </div>
-            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>Based on Fibonacci retracement, volume pressure and rally context</div>
+            <div style={{ height: 10, borderRadius: 5, background: "rgba(255,255,255,.08)", overflow: "hidden", marginBottom: 8 }}>
+              <div style={{ width: `${score}%`, height: "100%", borderRadius: 5, background: verdict.color, transition: "width .5s ease" }} />
+            </div>
+            {/* Score factor pills */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+              {[
+                [`📐 Fib: ${nearestFib?.label ?? "—"}`,     cur <= fib618 ? "green" : cur <= fib382 ? "gold" : "red"],
+                [`📋 Buyers: ${hasBuyers ? "Yes" : "None"}`, hasBuyers ? "green" : "red"],
+                [`📊 Overhang: ${daysToAbsorb !== null ? `${Math.round(daysToAbsorb)}d` : "—"}`, daysToAbsorb === null ? "dim" : daysToAbsorb > 30 ? "red" : daysToAbsorb > 10 ? "gold" : "green"],
+                ...(prev > 0 ? [[`📉 Day: ${dayChangePct.toFixed(1)}%`, dayChangePct < -5 ? "red" : dayChangePct < 0 ? "gold" : "green"]] : []),
+              ].map(([label, tone]) => (
+                <span key={label} style={{ fontSize: "var(--fs-xs)", fontWeight: 700, padding: "3px 8px", borderRadius: 20,
+                  background: tone === "green" ? "rgba(0,200,83,.15)" : tone === "red" ? "rgba(245,34,45,.15)" : tone === "gold" ? "rgba(245,166,35,.15)" : "rgba(140,155,176,.15)",
+                  color: tone === "green" ? "var(--clr-green)" : tone === "red" ? "var(--clr-red)" : tone === "gold" ? "var(--clr-gold)" : "var(--clr-dim)" }}>
+                  {label}
+                </span>
+              ))}
+            </div>
           </div>
 
           {/* Key metrics */}
           <div className="section-label">Key Metrics</div>
           <div>
             {[
-              ["Total Rally",           `${rallyPct.toFixed(1)}%  (GHS ${fmtN(base)} → GHS ${fmtN(peak)})`, "var(--clr-green)"],
-              ["Drawdown from Peak",    `−${drawdownPct.toFixed(1)}%  (GHS ${fmtN(peak)} → GHS ${fmtN(cur)})`, "var(--clr-red)"],
-              ["Still up from Base",    `+${gainFromBasePct.toFixed(1)}%  (GHS ${fmtN(gainFromBase)})`, "var(--clr-green)"],
-              ...(daysToAbsorb !== null ? [["Days to Clear Sell Wall", `~${Math.round(daysToAbsorb)} days (${overhangMultiple}× daily vol)`, daysToAbsorb > 50 ? "var(--clr-red)" : daysToAbsorb > 20 ? "var(--clr-gold)" : "var(--clr-green)"]] : []),
-              ...(volRatio !== null     ? [["Volume vs Average",        `${(volRatio*100).toFixed(0)}% of avg  (${volRatio >= 1 ? "+" : ""}${((volRatio-1)*100).toFixed(0)}%)`, volRatio >= 1.2 ? "var(--clr-green)" : volRatio < 0.7 ? "var(--clr-red)" : "var(--clr-gold)"]] : []),
+              ["Total Rally",        `+${rallyPct.toFixed(1)}%  (GHS ${fmtN(base)} → GHS ${fmtN(peak)})`,  "var(--clr-green)"],
+              ["Drawdown from Peak", `−${drawdownPct.toFixed(1)}%  (GHS ${fmtN(peak)} → GHS ${fmtN(cur)})`, "var(--clr-red)"],
+              ["Still up from Base", `+${gainFromBasePct.toFixed(1)}%  (+GHS ${fmtN(gainFromBase)})`,        "var(--clr-green)"],
+              ...(prev > 0 ? [["Day Change", `${dayChangePct >= 0 ? "+" : ""}${dayChangePct.toFixed(2)}%  (${dayChange >= 0 ? "+" : ""}GHS ${fmtN(Math.abs(dayChange))})`, dayChangePct >= 0 ? "var(--clr-green)" : "var(--clr-red)"]] : []),
+              ...(rangePosition !== null ? [["In Day Range", `${rangePosition.toFixed(0)}% of range  (Low ${fmtN(low)} – High ${fmtN(high)})`, rangePosition > 60 ? "var(--clr-green)" : rangePosition < 30 ? "var(--clr-red)" : "var(--clr-gold)"]] : []),
+              ...(daysToAbsorb !== null ? [["Days to Clear Sell Wall", `~${Math.round(daysToAbsorb)} days  (${overhangMult}× today's vol)`, daysToAbsorb > 50 ? "var(--clr-red)" : daysToAbsorb > 20 ? "var(--clr-gold)" : "var(--clr-green)"]] : []),
+              ...(orderImbalance !== null ? [["Order Book Imbalance", `${orderImbalance.toFixed(0)}% sell-heavy  (${buySellRatio.toFixed(2)} buy/sell ratio)`, orderImbalance > 60 ? "var(--clr-red)" : orderImbalance > 20 ? "var(--clr-gold)" : "var(--clr-green)"]] : []),
+              ...(volRatio !== null ? [["Volume vs Average", `${(volRatio * 100).toFixed(0)}% of avg  (${volRatio >= 1 ? "+" : ""}${((volRatio - 1) * 100).toFixed(0)}%)`, volRatio >= 1.2 ? "var(--clr-green)" : volRatio < 0.7 ? "var(--clr-red)" : "var(--clr-gold)"]] : []),
             ].map(([lbl, val, clr]) => (
               <div key={lbl} className="analysis-metric">
                 <span className="analysis-metric-label">{lbl}</span>
@@ -1031,30 +1209,64 @@ function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
             ))}
           </div>
 
-          {/* Fibonacci retracement table */}
+          {/* Order book snapshot */}
+          {(buyVol > 0 || sellVol > 0 || buyPx > 0 || sellPx > 0) && (
+            <>
+              <div className="section-label" style={{ marginTop: "var(--gap-md)" }}>Order Book Snapshot</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: "1px solid var(--clr-border)", borderBottom: "1px solid var(--clr-border)" }}>
+                {/* Buy side */}
+                <div style={{ padding: "clamp(12px,3vw,16px) var(--gutter,18px)", borderRight: "1px solid var(--clr-border)", background: hasBuyers ? "rgba(0,200,83,.05)" : "rgba(245,34,45,.03)" }}>
+                  <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>Buy Side</div>
+                  <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, color: hasBuyers ? "var(--clr-green)" : "var(--clr-dim)" }}>{buyPx > 0 ? `GHS ${fmtN(buyPx)}` : "0.00"}</div>
+                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 4 }}>{buyVol > 0 ? `${buyVol.toLocaleString()} shares` : "No buyers"}</div>
+                  {!hasBuyers && <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-red)", fontWeight: 700, marginTop: 6 }}>⚠ Zero bids</div>}
+                </div>
+                {/* Sell side */}
+                <div style={{ padding: "clamp(12px,3vw,16px) var(--gutter,18px)", background: sellVol > 0 ? "rgba(245,34,45,.05)" : "var(--clr-card)" }}>
+                  <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>Sell Side</div>
+                  <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, color: sellVol > 0 ? "var(--clr-red)" : "var(--clr-dim)" }}>{sellPx > 0 ? `GHS ${fmtN(sellPx)}` : "—"}</div>
+                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 4 }}>{sellVol > 0 ? `${sellVol.toLocaleString()} shares` : "No sellers"}</div>
+                  {spread !== null && <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 6 }}>Spread: GHS {fmtN(spread)} ({spreadPct?.toFixed(2)}%)</div>}
+                </div>
+              </div>
+              {/* Visual imbalance bar */}
+              {orderImbalance !== null && (
+                <div style={{ padding: "clamp(8px,2vw,10px) var(--gutter,18px)", background: "var(--clr-card)", borderBottom: "1px solid var(--clr-border)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>
+                    <span style={{ color: "var(--clr-green)" }}>Buy {buyVol > 0 ? ((buyVol/(buyVol+sellVol))*100).toFixed(0) : 0}%</span>
+                    <span>Order Imbalance</span>
+                    <span style={{ color: "var(--clr-red)" }}>Sell {sellVol > 0 ? ((sellVol/(buyVol+sellVol))*100).toFixed(0) : 0}%</span>
+                  </div>
+                  <div style={{ height: 8, borderRadius: 4, background: "var(--clr-red)", overflow: "hidden" }}>
+                    <div style={{ width: `${buyVol > 0 ? (buyVol/(buyVol+sellVol))*100 : 0}%`, height: "100%", background: "var(--clr-green)", borderRadius: 4 }} />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Fibonacci levels */}
           <div className="section-label" style={{ marginTop: "var(--gap-md)" }}>Fibonacci Retracement Levels</div>
           <div>
             {fibLevels.map(f => {
-              const isCurrent = Math.abs(f.price - cur) === Math.min(...fibLevels.map(x => Math.abs(x.price - cur)));
-              const isBelow   = cur <= f.price;
+              const dist = Math.abs(f.price - cur);
+              const isCurrent = dist === Math.min(...fibLevels.map(x => Math.abs(x.price - cur)));
+              const isBelow = cur <= f.price;
               return (
                 <div key={f.label} className="fib-row"
-                  style={{ background: isCurrent ? "rgba(245,166,35,.08)" : "var(--clr-card)", borderLeft: isCurrent ? "3px solid var(--clr-gold)" : "3px solid transparent" }}>
+                  style={{ background: isCurrent ? "rgba(245,166,35,.08)" : f.ratio === 0.618 ? "rgba(45,127,249,.04)" : "var(--clr-card)", borderLeft: isCurrent ? "3px solid var(--clr-gold)" : f.ratio === 0.618 ? "3px solid rgba(45,127,249,.4)" : "3px solid transparent" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-sm)" }}>
-                    <span style={{ fontWeight: 700, fontSize: "var(--fs-sm)", color: f.ratio === 0.618 ? "var(--clr-gold)" : f.ratio === 0.5 ? "var(--clr-accent)" : "var(--clr-dim)", minWidth: 44 }}>{f.label}</span>
+                    <span style={{ fontWeight: 800, fontSize: "var(--fs-sm)", color: f.ratio === 0.618 ? "var(--clr-accent)" : isCurrent ? "var(--clr-gold)" : "var(--clr-dim)", minWidth: 44 }}>{f.label}</span>
                     <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>
-                      {f.ratio === 0     ? "Base (0%)"    :
-                       f.ratio === 0.236 ? "Minor support" :
-                       f.ratio === 0.382 ? "Key support"   :
-                       f.ratio === 0.5   ? "Mid support"   :
-                       f.ratio === 0.618 ? "Golden ratio ★" :
-                       f.ratio === 0.786 ? "Deep support"  : "Full retracement"}
+                      {f.ratio === 0 ? "Base" : f.ratio === 0.236 ? "Minor" : f.ratio === 0.382 ? "Key support" : f.ratio === 0.5 ? "Mid support" : f.ratio === 0.618 ? "Golden ratio ★" : f.ratio === 0.786 ? "Deep support" : "Full retrace"}
                     </span>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {fmtN(f.price)}</div>
-                    {isCurrent && <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-gold)", fontWeight: 700 }}>◀ current</div>}
-                    {!isCurrent && <div style={{ fontSize: "var(--fs-xs)", color: isBelow ? "var(--clr-green)" : "var(--clr-red)" }}>{isBelow ? "▲ above" : "▼ below"}</div>}
+                    {isCurrent
+                      ? <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-gold)", fontWeight: 700 }}>◀ nearest</div>
+                      : <div style={{ fontSize: "var(--fs-xs)", color: isBelow ? "var(--clr-green)" : "var(--clr-red)" }}>{isBelow ? "▲ above" : "▼ below"} {dist < 1 ? `(GHS ${fmtN(dist)})` : ""}</div>
+                    }
                   </div>
                 </div>
               );
@@ -1071,8 +1283,8 @@ function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
           ))}
 
           {/* Disclaimer */}
-          <div style={{ padding: "clamp(12px,3vw,16px) var(--gutter,18px)", fontSize: "var(--fs-xs)", color: "var(--clr-dim)", lineHeight: 1.6, borderTop: "1px solid var(--clr-border)", marginTop: "var(--gap-md)" }}>
-            ⚠️ This analysis is based on technical indicators only and is for informational purposes. It does not constitute financial advice. Always conduct your own research and consider your risk tolerance before investing.
+          <div style={{ padding: "clamp(12px,3vw,16px) var(--gutter,18px)", fontSize: "var(--fs-xs)", color: "var(--clr-dim)", lineHeight: 1.65, borderTop: "1px solid var(--clr-border)", marginTop: "var(--gap-md)" }}>
+            ⚠️ This analysis uses technical indicators only and is for informational purposes. It does not constitute financial advice. Always do your own research and consider your risk tolerance before investing.
           </div>
         </>
       )}
