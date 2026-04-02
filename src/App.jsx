@@ -804,6 +804,36 @@ function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
   const [downDays,      setDownDays]      = useState("");   // consecutive down days (optional)
   const [weekHigh,      setWeekHigh]      = useState("");   // 52-week high (if different from peak)
   const [weekLow,       setWeekLow]       = useState("");   // 52-week low (if different from base)
+  const [fetchingData,  setFetchingData]  = useState(false);
+  const [fetchMsg,      setFetchMsg]      = useState("");   // status message after fetch
+  const [autoFilled,    setAutoFilled]    = useState(false); // true when fields came from API
+
+  // ── Fetch live data from kwayisi API for a given symbol ───────────────────
+  async function fetchStockData() {
+    if (!symbol.trim()) return;
+    setFetchingData(true); setFetchMsg(""); setAutoFilled(false);
+    try {
+      const res = await fetch(`https://dev.kwayisi.org/apis/gse/live/${symbol.trim().toUpperCase()}`);
+      if (!res.ok) throw new Error(res.status === 404 ? `Symbol "${symbol}" not found on GSE.` : `API error ${res.status}`);
+      const d = await res.json();
+      // d = { name, price, change, volume }
+      const price    = d.price;
+      const chg      = d.change ?? 0;
+      const prevCalc = chg !== 0 ? parseFloat((price / (1 + chg / 100)).toFixed(4)) : price;
+      const vol      = d.volume ?? 0;
+
+      setCurrentPrice(String(price));
+      setPrevClose(String(prevCalc));
+      setDailyVolume(String(vol));
+      // Prev close also doubles as open if open not known
+      if (!openPrice) setOpenPrice(String(prevCalc));
+      setAutoFilled(true);
+      setFetchMsg(`✓ Fetched ${d.name}: GHS ${price}  ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%  Vol: ${vol.toLocaleString()}`);
+    } catch (err) {
+      setFetchMsg(`⚠ ${err.message}`);
+    }
+    setFetchingData(false);
+  }
 
   // ── Parse inputs ──────────────────────────────────────────────────────────
   const base    = parseFloat(basePrice)    || 0;
@@ -1074,79 +1104,129 @@ function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
       {/* ── INPUT SECTION ── */}
       <div style={{ padding: "var(--gap-md) var(--gutter,18px)", borderBottom: `1px solid var(--clr-border)`, display: "flex", flexDirection: "column", gap: "var(--gap-sm)" }}>
 
-        {/* Row 1: Symbol + Current Price */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
-          <div>{fieldLabel("Symbol (optional)")}
-            <input style={inputStyle} placeholder="e.g. GCB" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} />
+        {/* Symbol search with fetch button */}
+        <div>
+          {fieldLabel("Stock Symbol")}
+          <div style={{ display: "flex", gap: "var(--gap-sm)" }}>
+            <input style={{ ...inputStyle, flex: 1, textTransform: "uppercase" }}
+              placeholder="e.g. GCB, MTNGH, CAL"
+              value={symbol}
+              onChange={e => { setSymbol(e.target.value.toUpperCase()); setAutoFilled(false); setFetchMsg(""); }}
+              onKeyDown={e => e.key === "Enter" && fetchStockData()} />
+            <button onClick={fetchStockData} disabled={fetchingData || !symbol.trim()}
+              style={{ ...S.liveBtn, width: "auto", marginTop: 0, padding: "0 clamp(12px,3vw,18px)", flexShrink: 0, opacity: !symbol.trim() ? 0.4 : 1 }}>
+              {fetchingData ? <><Spinner />Fetching…</> : <><span>⚡</span>Fetch</>}
+            </button>
           </div>
-          <div>{fieldLabel("Current Price (GHS)")}
-            <input style={inputStyle} type="number" placeholder="e.g. 27.06" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} />
-          </div>
+          {fetchMsg && (
+            <div style={{ fontSize: "var(--fs-sm)", marginTop: 5, color: fetchMsg.startsWith("✓") ? "var(--clr-green)" : "var(--clr-red)", padding: "5px 0" }}>
+              {fetchMsg}
+            </div>
+          )}
+          {autoFilled && (
+            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 2 }}>
+              🔄 Current price, prev close and volume auto-filled. Fill in remaining fields manually from your broker app.
+            </div>
+          )}
         </div>
 
-        {/* Row 2: Base + Peak */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
-          <div>{fieldLabel("Base / 52W Low (GHS)")}
-            <input style={inputStyle} type="number" placeholder="e.g. 7.00" value={basePrice} onChange={e => setBasePrice(e.target.value)} />
-          </div>
-          <div>{fieldLabel("Peak / 52W High (GHS)")}
-            <input style={inputStyle} type="number" placeholder="e.g. 52.00" value={peakPrice} onChange={e => setPeakPrice(e.target.value)} />
-          </div>
-        </div>
+        {/* Auto-filled badge helper */}
+        {(() => {
+          const autoTag = (filled) => filled && autoFilled
+            ? { border: "1px solid rgba(0,200,83,.4)", background: "rgba(0,200,83,.05)" }
+            : {};
+          const autoLabel = (label, filled) => (
+            <div style={{ ...S.label, marginBottom: 3, display: "flex", alignItems: "center", gap: 5 }}>
+              {label}
+              {filled && autoFilled && <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-green)", fontWeight: 700 }}>⚡ auto</span>}
+            </div>
+          );
 
-        {/* Row 3: Today's stats — open, high, low, prev close, avg price */}
-        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Today's Statistics</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--gap-sm)" }}>
-          <div>{fieldLabel("Open")}
-            <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={openPrice} onChange={e => setOpenPrice(e.target.value)} />
-          </div>
-          <div>{fieldLabel("High")}
-            <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={highPrice} onChange={e => setHighPrice(e.target.value)} />
-          </div>
-          <div>{fieldLabel("Low")}
-            <input style={inputStyle} type="number" placeholder="e.g. 27.06" value={lowPrice} onChange={e => setLowPrice(e.target.value)} />
-          </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
-          <div>{fieldLabel("Prev. Close")}
-            <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={prevClose} onChange={e => setPrevClose(e.target.value)} />
-          </div>
-          <div>{fieldLabel("Avg. Price")}
-            <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={avgPrice} onChange={e => setAvgPrice(e.target.value)} />
-          </div>
-        </div>
+          return (
+            <>
+              {/* Row 1: Current price + Peak */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
+                <div>
+                  {autoLabel("Current Price (GHS)", !!currentPrice)}
+                  <input style={{ ...inputStyle, ...autoTag(!!currentPrice) }} type="number" placeholder="e.g. 27.06" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} />
+                </div>
+                <div>
+                  {autoLabel("Peak / 52W High (GHS)", false)}
+                  <input style={inputStyle} type="number" placeholder="e.g. 52.00" value={peakPrice} onChange={e => setPeakPrice(e.target.value)} />
+                </div>
+              </div>
 
-        {/* Row 4: Order book */}
-        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Order Book</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "var(--gap-sm)" }}>
-          <div>{fieldLabel("Buy Price")}
-            <input style={inputStyle} type="number" placeholder="e.g. 0.00" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} />
-          </div>
-          <div>{fieldLabel("Buy Vol.")}
-            <input style={inputStyle} type="number" placeholder="e.g. 0" value={buyVolume} onChange={e => setBuyVolume(e.target.value)} />
-          </div>
-          <div>{fieldLabel("Sell Price")}
-            <input style={inputStyle} type="number" placeholder="e.g. 27.06" value={sellPrice} onChange={e => setSellPrice(e.target.value)} />
-          </div>
-          <div>{fieldLabel("Sell Vol.")}
-            <input style={inputStyle} type="number" placeholder="e.g. 91099" value={sellVolume} onChange={e => setSellVolume(e.target.value)} />
-          </div>
-        </div>
+              {/* Row 2: Base + Prev close */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
+                <div>
+                  {autoLabel("Base / 52W Low (GHS)", false)}
+                  <input style={inputStyle} type="number" placeholder="e.g. 7.00" value={basePrice} onChange={e => setBasePrice(e.target.value)} />
+                </div>
+                <div>
+                  {autoLabel("Prev. Close (GHS)", !!prevClose)}
+                  <input style={{ ...inputStyle, ...autoTag(!!prevClose) }} type="number" placeholder="e.g. 30.05" value={prevClose} onChange={e => setPrevClose(e.target.value)} />
+                </div>
+              </div>
 
-        {/* Row 5: Volume */}
-        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Volume</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
-          <div>{fieldLabel("Volume Traded Today")}
-            <input style={inputStyle} type="number" placeholder="e.g. 21300" value={dailyVolume} onChange={e => setDailyVolume(e.target.value)} />
-          </div>
-          <div>{fieldLabel("Avg. Daily Vol (optional)")}
-            <input style={inputStyle} type="number" placeholder="e.g. 15000" value={avgDailyVol} onChange={e => setAvgDailyVol(e.target.value)} />
-          </div>
-        </div>
+              {/* Today's Statistics */}
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Today's Statistics — from broker app</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--gap-sm)" }}>
+                <div>{autoLabel("Open", !!openPrice)}
+                  <input style={{ ...inputStyle, ...autoTag(!!openPrice) }} type="number" placeholder="e.g. 30.05" value={openPrice} onChange={e => setOpenPrice(e.target.value)} />
+                </div>
+                <div>{fieldLabel("High")}
+                  <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={highPrice} onChange={e => setHighPrice(e.target.value)} />
+                </div>
+                <div>{fieldLabel("Low")}
+                  <input style={inputStyle} type="number" placeholder="e.g. 27.06" value={lowPrice} onChange={e => setLowPrice(e.target.value)} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-sm)" }}>
+                <div>{autoLabel("Volume Today", !!dailyVolume)}
+                  <input style={{ ...inputStyle, ...autoTag(!!dailyVolume) }} type="number" placeholder="e.g. 21300" value={dailyVolume} onChange={e => setDailyVolume(e.target.value)} />
+                </div>
+                <div>{fieldLabel("Avg. Price")}
+                  <input style={inputStyle} type="number" placeholder="e.g. 30.05" value={avgPrice} onChange={e => setAvgPrice(e.target.value)} />
+                </div>
+              </div>
+
+              {/* Order book */}
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Order Book — from broker app</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "var(--gap-sm)" }}>
+                <div>{fieldLabel("Buy Price")}
+                  <input style={inputStyle} type="number" placeholder="0.00" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} />
+                </div>
+                <div>{fieldLabel("Buy Vol.")}
+                  <input style={inputStyle} type="number" placeholder="0" value={buyVolume} onChange={e => setBuyVolume(e.target.value)} />
+                </div>
+                <div>{fieldLabel("Sell Price")}
+                  <input style={inputStyle} type="number" placeholder="e.g. 27.06" value={sellPrice} onChange={e => setSellPrice(e.target.value)} />
+                </div>
+                <div>{fieldLabel("Sell Vol.")}
+                  <input style={inputStyle} type="number" placeholder="e.g. 91099" value={sellVolume} onChange={e => setSellVolume(e.target.value)} />
+                </div>
+              </div>
+
+              {/* Optional extras */}
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2 }}>Optional — improves accuracy</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--gap-sm)" }}>
+                <div>{fieldLabel("Avg Daily Vol")}
+                  <input style={inputStyle} type="number" placeholder="optional" value={avgDailyVol} onChange={e => setAvgDailyVol(e.target.value)} />
+                </div>
+                <div>{fieldLabel("Down Days")}
+                  <input style={inputStyle} type="number" placeholder="e.g. 3" value={downDays} onChange={e => setDownDays(e.target.value)} />
+                </div>
+                <div>{fieldLabel("52W High")}
+                  <input style={inputStyle} type="number" placeholder="= Peak" value={weekHigh} onChange={e => setWeekHigh(e.target.value)} />
+                </div>
+              </div>
+            </>
+          );
+        })()}
 
         {!ready && (
           <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", textAlign: "center", padding: "var(--gap-sm) 0" }}>
-            Fill in Base Price, Peak Price and Current Price to generate analysis.
+            Enter a symbol and tap ⚡ Fetch, then fill in Base Price and Peak Price to generate analysis.
           </div>
         )}
       </div>
