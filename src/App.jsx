@@ -2057,6 +2057,8 @@ export default function App() {
   const [mfForm,         setMfForm]         = useState({ name: "", principal: "" });
   const [mfEntryForm,    setMfEntryForm]    = useState({ date: "", interest: "", maturityAmount: "" });
   const [showMFPct,      setShowMFPct]      = useState({});
+  const [heroCard,       setHeroCard]       = useState(0); // 0 = live totals, 1 = statement view
+  const heroTouchX = useRef(null);
 
   // ── Apply theme class to body ─────────────────────────────────────────────
   useEffect(() => {
@@ -2341,6 +2343,14 @@ export default function App() {
   const totalDayPnl   = stocks.reduce((s, x) => x.currentPrice !== null && x.prevPrice !== null ? s + (x.currentPrice - x.prevPrice) * x.totalShares : s, 0);
   const totalDayPct   = (totalValue - totalDayPnl) ? (totalDayPnl / (totalValue - totalDayPnl)) * 100 : 0;
 
+  // Statement card totals — only stocks with avgCostLocked (sourced from PDF page 1 table)
+  const stmtStocks      = stocks.filter(x => x.avgCostLocked);
+  const stmtHasData     = stmtStocks.length > 0;
+  const stmtMarketValue = stmtStocks.reduce((s, x) => s + (x.currentPrice !== null ? x.currentPrice * x.totalShares : 0), 0);
+  const stmtAvgCostTotal= stmtStocks.reduce((s, x) => s + x.avgCost * x.totalShares, 0);
+  const stmtPnl         = stmtMarketValue - stmtAvgCostTotal;
+  const stmtPnlPct      = stmtAvgCostTotal ? (stmtPnl / stmtAvgCostTotal) * 100 : 0;
+
   // ═══════════════════════════════════════════════════════════════════════════
   // TAB ROUTING — non-stock tabs
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2608,22 +2618,73 @@ export default function App() {
           </div>
         </div>
 
-        {/* Hero card */}
-        <div style={S.hero}>
-          <div style={S.label}>Total Value</div>
-          <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${totalValue.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
-          <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
-            <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}>
-              <div style={S.label}>Total P&L</div>
-              <div style={{ color: hidden ? "var(--clr-dim)" : col(totalPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalPnlPct) : fmtGHS(totalPnl))}</div>
+        {/* Swipeable hero cards */}
+        {(() => {
+          const handleTouchStart = e => { heroTouchX.current = e.touches[0].clientX; };
+          const handleTouchEnd   = e => {
+            if (heroTouchX.current === null) return;
+            const dx = e.changedTouches[0].clientX - heroTouchX.current;
+            heroTouchX.current = null;
+            if (Math.abs(dx) < 40) return;
+            setHeroCard(dx < 0 ? 1 : 0);
+          };
+          return (
+            <div style={{ position: "relative", overflow: "hidden", touchAction: "pan-y" }}
+              onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+
+              {/* Slide track */}
+              <div style={{ display: "flex", transition: "transform .3s cubic-bezier(.4,0,.2,1)", transform: `translateX(${heroCard === 0 ? "0%" : "-100%"})`, willChange: "transform" }}>
+
+                {/* Card 0 — Live totals */}
+                <div style={{ ...S.hero, flexShrink: 0, width: "100%", boxSizing: "border-box" }}>
+                  <div style={S.label}>Total Value</div>
+                  <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${totalValue.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
+                  <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
+                    <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}>
+                      <div style={S.label}>Total P&L</div>
+                      <div style={{ color: hidden ? "var(--clr-dim)" : col(totalPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalPnlPct) : fmtGHS(totalPnl))}</div>
+                    </div>
+                    <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}>
+                      <div style={S.label}>Today</div>
+                      <div style={{ color: hidden ? "var(--clr-dim)" : col(totalDayPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalDayPct) : fmtGHS(totalDayPnl))}</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>Tap figures to toggle GHS ↔ % · swipe for statement view</div>
+                </div>
+
+                {/* Card 1 — Statement view */}
+                <div style={{ ...S.hero, flexShrink: 0, width: "100%", boxSizing: "border-box", background: "linear-gradient(135deg,rgba(45,127,249,.18) 0%,rgba(45,127,249,.06) 100%)", border: "1px solid rgba(45,127,249,.25)" }}>
+                  <div style={{ ...S.label, color: "var(--clr-accent)" }}>Statement · Wtd Avg Cost</div>
+                  {!stmtHasData ? (
+                    <div style={{ color: "var(--clr-dim)", fontSize: "var(--fs-md)", marginTop: 8 }}>Import a PDF statement to see this view.</div>
+                  ) : (
+                    <>
+                      <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${stmtMarketValue.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
+                      <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
+                        <div>
+                          <div style={S.label}>Avg Cost Basis</div>
+                          <div style={{ fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : `GHS ${stmtAvgCostTotal.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
+                        </div>
+                        <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}>
+                          <div style={S.label}>P&L</div>
+                          <div style={{ color: hidden ? "var(--clr-dim)" : col(stmtPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(stmtPnlPct) : fmtGHS(stmtPnl))}</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>{stmtStocks.length} stock{stmtStocks.length !== 1 ? "s" : ""} from statement · tap P&L to toggle %</div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Dot indicators */}
+              <div style={{ display: "flex", justifyContent: "center", gap: 6, paddingBottom: "clamp(6px,1.5vw,10px)", marginTop: -4 }}>
+                {[0, 1].map(i => (
+                  <div key={i} onClick={() => setHeroCard(i)} style={{ width: heroCard === i ? 18 : 6, height: 6, borderRadius: 3, background: heroCard === i ? "var(--clr-accent)" : "var(--clr-border)", transition: "all .25s", cursor: "pointer" }} />
+                ))}
+              </div>
             </div>
-            <div onClick={() => setShowPct(!showPct)} style={{ cursor: "pointer" }}>
-              <div style={S.label}>Today</div>
-              <div style={{ color: hidden ? "var(--clr-dim)" : col(totalDayPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalDayPct) : fmtGHS(totalDayPnl))}</div>
-            </div>
-          </div>
-          <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>Tap figures to toggle GHS ↔ %</div>
-        </div>
+          );
+        })()}
 
         {/* Action buttons */}
         <div style={{ padding: "0 var(--gutter,18px) var(--gap-md,12px)" }}>
