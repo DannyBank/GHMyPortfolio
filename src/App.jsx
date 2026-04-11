@@ -144,8 +144,14 @@ function buildPortfolio(trades, wtdAvgMap = {}) {
     s.trades.push(t);
   }
   for (const s of Object.values(map)) {
-    // Use Wtd Avg Cost from the statement if available, otherwise fall back to calculated
-    s.avgCost = wtdAvgMap[s.symbol] ?? (s.totalCost / s.totalShares);
+    if (wtdAvgMap[s.symbol] != null) {
+      // Statement-sourced Wtd Avg Cost — lock it so manual additions don't overwrite it
+      s.avgCost       = wtdAvgMap[s.symbol];
+      s.avgCostLocked = true;
+    } else {
+      s.avgCost       = s.totalCost / s.totalShares;
+      s.avgCostLocked = false;
+    }
   }
   return map;
 }
@@ -2126,8 +2132,14 @@ export default function App() {
           next[sym].totalShares += data.totalShares;
           next[sym].totalCost   += data.totalCost;
           next[sym].trades       = [...next[sym].trades, ...data.trades];
-          // Prefer statement Wtd Avg Cost; fall back to recalculated
-          next[sym].avgCost      = wtdAvgMap[sym] ?? (next[sym].totalCost / next[sym].totalShares);
+          // Prefer statement Wtd Avg Cost and lock it; fall back to recalculated
+          if (wtdAvgMap[sym] != null) {
+            next[sym].avgCost       = wtdAvgMap[sym];
+            next[sym].avgCostLocked = true;
+          } else {
+            next[sym].avgCost       = next[sym].totalCost / next[sym].totalShares;
+            next[sym].avgCostLocked = false;
+          }
         } else {
           next[sym] = { ...data, currentPrice: null, prevPrice: null };
         }
@@ -2223,7 +2235,9 @@ export default function App() {
     setPortfolio(prev => {
       const ex = prev[sym] ?? { symbol: sym, totalShares: 0, totalCost: 0, trades: [], currentPrice: null, prevPrice: null };
       const ns = ex.totalShares + trade.shares, nc = ex.totalCost + trade.consideration + trade.charges;
-      return { ...prev, [sym]: { ...ex, totalShares: ns, totalCost: nc, trades: [...ex.trades, trade], avgCost: nc / ns } };
+      // Preserve statement-sourced avgCost if locked; only recalculate for fully manual portfolios
+      const newAvgCost = ex.avgCostLocked ? ex.avgCost : nc / ns;
+      return { ...prev, [sym]: { ...ex, totalShares: ns, totalCost: nc, trades: [...ex.trades, trade], avgCost: newAvgCost } };
     });
     setManForm({ symbol: "", shares: "", price: "", charges: "", date: "" }); setManualOpen(false);
   }
