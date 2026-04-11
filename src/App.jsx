@@ -153,24 +153,36 @@ function buildPortfolio(trades, wtdAvgMap = {}) {
 // ─── PDF extractor ───────────────────────────────────────────────────────────
 // Parses the Equities table on page 1 to extract Wtd Avg Cost per symbol.
 // Table rows look like: MTNGH GHEMTN051541 2,500.00 4.180000 5.50 13,750.00
-// We match: SYMBOL  ISIN  Qty  WtdAvgCost  MarketPrice  MarketValue
-function parseEquitiesTable(text) {
+// Columns: Symbol | ISIN | Qty | WtdAvgCost | MarketPrice | MarketValue
+function parseEquitiesTable(page1Text) {
   const wtdAvgMap = {};
-  // Only scan the Equities section — find it between "Equities" and "Cash"
-  const equitiesStart = text.search(/\bEquities\b/i);
-  const cashStart     = text.search(/\bCash\b/i);
+  // Slice to just the Equities section on page 1
+  const equitiesStart = page1Text.search(/\bEquities\b/i);
+  const cashStart     = page1Text.search(/\bCash\b/i);
   if (equitiesStart === -1) return wtdAvgMap;
-  const section = cashStart > equitiesStart ? text.slice(equitiesStart, cashStart) : text.slice(equitiesStart);
-  // Match rows: SYMBOL  ISIN(12 chars, may have spaces)  Qty  WtdAvgCost  MarketPrice  MarketValue
-  // We look for a known GSE ticker followed by numbers. ISIN is optional (skip it).
-  // Pattern: SYMBOL  (optional ISIN)  Qty  WtdAvgCost  MarketPrice  MarketValue
-  const rowRe = /\b([A-Z]{2,8})\s+(?:[A-Z0-9\s]{10,14}\s+)?([\d,]+\.?\d*)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)/g;
-  let m;
-  while ((m = rowRe.exec(section)) !== null) {
-    const sym    = m[1].toUpperCase();
-    const wtdAvg = safeFloat(m[3]);
-    // Sanity check: wtdAvg should be a plausible share price (> 0, < 10000)
-    if (wtdAvg > 0 && wtdAvg < 10000) wtdAvgMap[sym] = wtdAvg;
+  const section = cashStart > equitiesStart
+    ? page1Text.slice(equitiesStart, cashStart)
+    : page1Text.slice(equitiesStart);
+
+  // PDF.js joins text items with spaces. Each row is:
+  //   SYMBOL  ISIN  Qty  WtdAvgCost  MarketPrice  MarketValue
+  // ISIN is 12 chars (2 letters + 10 alphanumeric), may or may not have an internal space.
+  // We try strict first, then with one internal space in the ISIN.
+  const patterns = [
+    // Strict: ISIN has no internal space
+    /\b([A-Z]{2,8})\s+[A-Z]{2}[A-Z0-9]{10}\s+([\d,]+\.?\d*)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)/g,
+    // Split: ISIN has one space (PDF.js split it)
+    /\b([A-Z]{2,8})\s+[A-Z]{2}\s[A-Z0-9]{10}\s+([\d,]+\.?\d*)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)/g,
+  ];
+
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(section)) !== null) {
+      const sym    = m[1].toUpperCase();
+      const wtdAvg = safeFloat(m[3]); // m[2]=Qty, m[3]=WtdAvgCost, m[4]=MktPrice, m[5]=MktValue
+      if (wtdAvg > 0 && wtdAvg < 10000) wtdAvgMap[sym] = wtdAvg;
+    }
+    if (Object.keys(wtdAvgMap).length > 0) return wtdAvgMap;
   }
   return wtdAvgMap;
 }
@@ -178,13 +190,25 @@ function parseEquitiesTable(text) {
 async function extractTradesFromPDF(file) {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let fullText = "";
-  for (let i = 1; i <= pdf.numPages; i++) {
+
+  // Extract page 1 text separately for the equities table
+  const page1Items = await pdf.getPage(1).then(p => p.getTextContent()).then(c => c.items.map(x => x.str));
+  const page1Text  = page1Items.join(" ");
+
+  // Log the equities section so we can verify parsing in the console
+  const eqStart = page1Text.search(/\bEquities\b/i);
+  const cStart  = page1Text.search(/\bCash\b/i);
+  if (eqStart !== -1) console.debug("[PDF] Equities section:", page1Text.slice(eqStart, cStart > eqStart ? cStart : eqStart + 600));
+
+  const wtdAvgMap = parseEquitiesTable(page1Text);
+  console.debug("[PDF] Wtd Avg Cost map:", wtdAvgMap);
+
+  // Build full text for trade extraction (all pages)
+  let fullText = page1Text + "\n";
+  for (let i = 2; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     fullText += (await page.getTextContent()).items.map(x => x.str).join(" ") + "\n";
   }
-  // Extract Wtd Avg Cost from the equities table on page 1
-  const wtdAvgMap = parseEquitiesTable(fullText);
 
   const trades = [];
   const dateRe  = /(\d{2}\/\d{2}\/\d{4})/g;
