@@ -134,7 +134,7 @@ function safeFloat(str) {
 function today() { return new Date().toISOString().slice(0, 10); }
 
 // ─── Portfolio builder ───────────────────────────────────────────────────────
-function buildPortfolio(trades) {
+function buildPortfolio(trades, wtdAvgMap = {}) {
   const map = {};
   for (const t of trades) {
     if (!map[t.symbol]) map[t.symbol] = { symbol: t.symbol, totalShares: 0, totalCost: 0, trades: [], currentPrice: null, prevPrice: null };
@@ -143,11 +143,38 @@ function buildPortfolio(trades) {
     s.totalCost   += t.consideration + t.charges;
     s.trades.push(t);
   }
-  for (const s of Object.values(map)) s.avgCost = s.totalCost / s.totalShares;
+  for (const s of Object.values(map)) {
+    // Use Wtd Avg Cost from the statement if available, otherwise fall back to calculated
+    s.avgCost = wtdAvgMap[s.symbol] ?? (s.totalCost / s.totalShares);
+  }
   return map;
 }
 
 // ─── PDF extractor ───────────────────────────────────────────────────────────
+// Parses the Equities table on page 1 to extract Wtd Avg Cost per symbol.
+// Table rows look like: MTNGH GHEMTN051541 2,500.00 4.180000 5.50 13,750.00
+// We match: SYMBOL  ISIN  Qty  WtdAvgCost  MarketPrice  MarketValue
+function parseEquitiesTable(text) {
+  const wtdAvgMap = {};
+  // Only scan the Equities section — find it between "Equities" and "Cash"
+  const equitiesStart = text.search(/\bEquities\b/i);
+  const cashStart     = text.search(/\bCash\b/i);
+  if (equitiesStart === -1) return wtdAvgMap;
+  const section = cashStart > equitiesStart ? text.slice(equitiesStart, cashStart) : text.slice(equitiesStart);
+  // Match rows: SYMBOL  ISIN(12 chars, may have spaces)  Qty  WtdAvgCost  MarketPrice  MarketValue
+  // We look for a known GSE ticker followed by numbers. ISIN is optional (skip it).
+  // Pattern: SYMBOL  (optional ISIN)  Qty  WtdAvgCost  MarketPrice  MarketValue
+  const rowRe = /\b([A-Z]{2,8})\s+(?:[A-Z0-9\s]{10,14}\s+)?([\d,]+\.?\d*)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)/g;
+  let m;
+  while ((m = rowRe.exec(section)) !== null) {
+    const sym    = m[1].toUpperCase();
+    const wtdAvg = safeFloat(m[3]);
+    // Sanity check: wtdAvg should be a plausible share price (> 0, < 10000)
+    if (wtdAvg > 0 && wtdAvg < 10000) wtdAvgMap[sym] = wtdAvg;
+  }
+  return wtdAvgMap;
+}
+
 async function extractTradesFromPDF(file) {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -156,6 +183,9 @@ async function extractTradesFromPDF(file) {
     const page = await pdf.getPage(i);
     fullText += (await page.getTextContent()).items.map(x => x.str).join(" ") + "\n";
   }
+  // Extract Wtd Avg Cost from the equities table on page 1
+  const wtdAvgMap = parseEquitiesTable(fullText);
+
   const trades = [];
   const dateRe  = /(\d{2}\/\d{2}\/\d{4})/g;
   const tradeRe = /(?<![a-z])Bought\s+([\d,]+)\s+([A-Z]+)\s+at\s+([\d,.]+)\s+for a consideration of\s+([\d,.]+)\s+and total charges of\s+([\d,.]+)/gi;
@@ -165,7 +195,7 @@ async function extractTradesFromPDF(file) {
     while (di + 1 < dates.length && dates[di + 1].index < m.index) di++;
     trades.push({ date: dates[di]?.[1] || "Unknown", shares: safeFloat(m[1]), symbol: m[2].toUpperCase(), pricePerShare: safeFloat(m[3]), consideration: safeFloat(m[4]), charges: safeFloat(m[5]) });
   }
-  return trades;
+  return { trades, wtdAvgMap };
 }
 
 // ─── Export helpers ──────────────────────────────────────────────────────────
@@ -2050,12 +2080,12 @@ export default function App() {
     const file = e.target.files[0]; if (!file) return;
     setLoading(true); setError(""); setLoadMsg("Reading PDF…");
     try {
-      const trades = await extractTradesFromPDF(file);
+      const { trades, wtdAvgMap } = await extractTradesFromPDF(file);
       if (!trades?.length) {
         setError("No 'Bought' transactions found. Ensure the PDF is from IC Securities.");
       } else {
         setLoadMsg(`Found ${trades.length} transactions…`);
-        setPendingTrades(trades); // show merge/replace choice sheet
+        setPendingTrades({ trades, wtdAvgMap }); // show merge/replace choice sheet
       }
     } catch (err) { setError("Error parsing PDF: " + err.message); }
     setLoading(false); setLoadMsg(""); e.target.value = "";
@@ -2063,7 +2093,8 @@ export default function App() {
 
   // ── Merge PDF trades into existing portfolio (add on top) ─────────────────
   function commitMerge() {
-    const built = buildPortfolio(pendingTrades);
+    const { trades, wtdAvgMap } = pendingTrades;
+    const built = buildPortfolio(trades, wtdAvgMap);
     setPortfolio(prev => {
       const next = { ...prev };
       for (const [sym, data] of Object.entries(built)) {
@@ -2071,7 +2102,8 @@ export default function App() {
           next[sym].totalShares += data.totalShares;
           next[sym].totalCost   += data.totalCost;
           next[sym].trades       = [...next[sym].trades, ...data.trades];
-          next[sym].avgCost      = next[sym].totalCost / next[sym].totalShares;
+          // Prefer statement Wtd Avg Cost; fall back to recalculated
+          next[sym].avgCost      = wtdAvgMap[sym] ?? (next[sym].totalCost / next[sym].totalShares);
         } else {
           next[sym] = { ...data, currentPrice: null, prevPrice: null };
         }
@@ -2083,7 +2115,8 @@ export default function App() {
 
   // ── Replace portfolio with PDF trades (fresh start) ───────────────────────
   async function commitReplace() {
-    const built = buildPortfolio(pendingTrades);
+    const { trades, wtdAvgMap } = pendingTrades;
+    const built = buildPortfolio(trades, wtdAvgMap);
     // Preserve current/prev prices for symbols that already exist
     setPortfolio(prev => {
       const next = {};
@@ -2098,7 +2131,7 @@ export default function App() {
     });
     // Sync to DB: clear all then write new
     await dbClear();
-    const built2 = buildPortfolio(pendingTrades);
+    const built2 = buildPortfolio(trades, wtdAvgMap);
     for (const [sym, data] of Object.entries(built2)) {
       await dbPut({ ...data, currentPrice: null, prevPrice: null });
     }
@@ -2662,7 +2695,7 @@ export default function App() {
         <div className="bottom-sheet">
           <div className="sheet-title">Statement Imported</div>
           <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)", marginBottom: "var(--gap-md)", lineHeight: 1.6 }}>
-            Found <strong style={{ color: "var(--clr-text)" }}>{pendingTrades.length} transaction{pendingTrades.length !== 1 ? "s" : ""}</strong> in this statement.
+            Found <strong style={{ color: "var(--clr-text)" }}>{pendingTrades.trades.length} transaction{pendingTrades.trades.length !== 1 ? "s" : ""}</strong> in this statement.
             How would you like to apply them?
           </div>
 
