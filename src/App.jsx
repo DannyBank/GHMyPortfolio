@@ -1742,66 +1742,6 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
     ? `${autoRefDate}${autoRefDate !== rdTarget ? ` (closest to ${rdTarget})` : ""}`
     : rdTarget;
 
-  function StockRow({ s }) {
-    const cur    = s.currentPrice;
-    const ref    = refPrices[s.symbol];
-    const change = cur != null && ref != null ? cur - ref : null;
-    const pct    = change != null && ref > 0   ? (change / ref) * 100 : null;
-    const hasRef = ref != null;
-    return (
-      <div style={{ background: "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(12px,3vw,15px) var(--gutter,18px)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-md)" }}>
-            <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: "var(--fs-lg)" }}>{s.symbol}</div>
-              <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 1 }}>{s.totalShares.toLocaleString()} shares</div>
-            </div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            {cur != null
-              ? <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {cur}</div>
-              : <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>No price</div>}
-            {pct != null && (
-              <div style={{ ...S.changeBadge(pct), marginTop: 4, justifyContent: "flex-end" }}>
-                <Arrow value={pct} />{pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
-              </div>
-            )}
-          </div>
-        </div>
-        <div style={{ marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", gap: "var(--gap-sm)", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase" }}>Ref</span>
-          {editing === s.symbol ? (
-            <>
-              <input autoFocus type="number" value={editVal}
-                onChange={e => setEditVal(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") saveRef(s.symbol); if (e.key === "Escape") { setEditing(null); setEditVal(""); } }}
-                style={{ ...S.input, width: 110, marginBottom: 0, padding: "5px 9px", fontSize: "var(--fs-base)" }}
-                placeholder="e.g. 0.45" />
-              <button onClick={() => saveRef(s.symbol)} style={{ background: "var(--clr-accent)", color: "#fff", border: "none", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: "var(--fs-sm)", cursor: "pointer" }}>✓</button>
-              <button onClick={() => { setEditing(null); setEditVal(""); }} style={{ background: "var(--clr-card)", color: "var(--clr-dim)", border: "1px solid var(--clr-border)", borderRadius: 8, padding: "5px 10px", fontSize: "var(--fs-sm)", cursor: "pointer" }}>✕</button>
-            </>
-          ) : (
-            <>
-              <span style={{ fontWeight: 700, fontSize: "var(--fs-base)", color: hasRef ? "var(--clr-text)" : "var(--clr-dim)" }}>
-                {hasRef ? `GHS ${ref}` : "—"}
-              </span>
-              {change != null && (
-                <span style={{ fontSize: "var(--fs-sm)", color: col(change) }}>
-                  ({change >= 0 ? "+" : ""}GHS {Math.abs(change).toFixed(4)})
-                </span>
-              )}
-              <button onClick={() => { setEditing(s.symbol); setEditVal(ref != null ? String(ref) : ""); }}
-                style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-accent)", borderRadius: 7, padding: "3px 10px", fontSize: "var(--fs-xs)", cursor: "pointer", fontWeight: 600 }}>
-                {hasRef ? "Edit" : "Set"}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div style={S.root}>
       <div style={S.header}>
