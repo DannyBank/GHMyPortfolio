@@ -2600,6 +2600,8 @@ export default function App() {
   const [showMFPct,      setShowMFPct]      = useState({});
   const [heroCard,       setHeroCard]       = useState(0); // 0 = live totals, 1 = statement view
   const heroTouchX = useRef(null);
+  const [showDCA,        setShowDCA]        = useState(false);
+  const [dcaTarget,      setDcaTarget]      = useState("");
 
   // ── Apply theme class to body ─────────────────────────────────────────────
   useEffect(() => {
@@ -3031,6 +3033,173 @@ export default function App() {
             </div>
           ))}
         </div>
+
+        {/* ── Advisory section ── */}
+        {s.currentPrice !== null && (() => {
+          const cur        = s.currentPrice;
+          const totalCost  = s.totalCost;
+          const shares     = s.totalShares;
+          const marketVal  = cur * shares;
+          const profit     = marketVal - totalCost;
+          const profitPct  = totalCost ? (profit / totalCost) * 100 : 0;
+          const profitPerShare = profit / shares;
+          const avgCost    = s.avgCost;
+          const inProfit   = profit >= 0;
+
+          // DCA: how many shares at current price to reach a target avg cost
+          // newAvg = (totalCost + n*cur) / (shares + n)  →  n = (totalCost - targetAvg*shares) / (targetAvg - cur)
+          const targetAvg  = parseFloat(dcaTarget) || 0;
+          const dcaShares  = targetAvg > 0 && targetAvg > cur
+            ? Math.ceil((totalCost - targetAvg * shares) / (targetAvg - cur))
+            : null;
+          const dcaCost    = dcaShares != null ? dcaShares * cur : null;
+          const dcaNewAvg  = dcaShares != null
+            ? (totalCost + dcaShares * cur) / (shares + dcaShares)
+            : null;
+
+          // Break-even: target = current price → shares needed so newAvg = cur
+          const beShares   = !inProfit && cur > 0
+            ? Math.ceil((totalCost - cur * shares) / (cur - cur))  // undefined (cur=cur), use formula below
+            : null;
+          // Correct break-even: newAvg = cur → (totalCost + n*cur)/(shares+n) = cur
+          // → totalCost + n*cur = cur*shares + n*cur → totalCost = cur*shares → impossible unless already there
+          // Real break-even: we need market value = totalCost → cur*(shares+n) = totalCost + n*cur
+          // → cur*shares + cur*n = totalCost + n*cur → cur*shares = totalCost → only works if cur rises
+          // DCA break-even means: buy enough shares so avgCost drops to cur (then any rise = profit)
+          // avgCost after buying n more @ cur: (totalCost + n*cur)/(shares+n) = cur
+          // → totalCost + n*cur = cur*shares + n*cur → totalCost = cur*shares → impossible
+          // Correct interpretation: buy n shares so that the TOTAL position breaks even at current price
+          // i.e. (totalCost + n*cur) = cur*(shares+n) → totalCost = cur*shares → only if cur = avgCost
+          // The practical DCA goal: reduce avgCost toward cur so future gains cover the loss faster.
+          // We show: shares to buy to reach avgCost = cur (break-even avg), which requires cur < avgCost.
+          const dcaBreakEvenShares = !inProfit && cur < avgCost
+            ? Math.ceil((totalCost - cur * shares) / (cur - cur + 0.0001)) // limit case
+            : null;
+          // Simpler: shares to halve the loss gap (bring avgCost halfway to cur)
+          const halfwayTarget = !inProfit ? cur + (avgCost - cur) / 2 : null;
+          const halfwayShares = halfwayTarget != null && halfwayTarget > cur
+            ? Math.ceil((totalCost - halfwayTarget * shares) / (halfwayTarget - cur))
+            : null;
+          const halfwayCost   = halfwayShares != null ? halfwayShares * cur : null;
+          const halfwayNewAvg = halfwayShares != null
+            ? (totalCost + halfwayShares * cur) / (shares + halfwayShares)
+            : null;
+
+          return (
+            <>
+              <div className="section-label">Advisory</div>
+
+              {/* Verdict card */}
+              <div style={{ margin: "0 var(--gutter,18px) var(--gap-md)", borderRadius: "var(--radius-card)", padding: "clamp(14px,3.5vw,18px)", background: inProfit ? "rgba(0,200,83,.07)" : "rgba(245,34,45,.07)", border: `1px solid ${inProfit ? "rgba(0,200,83,.25)" : "rgba(245,34,45,.25)"}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <span style={{ fontSize: "clamp(20px,5vw,26px)" }}>{inProfit ? "✅" : "⚠️"}</span>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)", color: inProfit ? "var(--clr-green)" : "var(--clr-red)" }}>
+                      {inProfit ? "You are in profit" : "You are at a loss"}
+                    </div>
+                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 2 }}>
+                      Based on total cost including brokerage fees
+                    </div>
+                  </div>
+                </div>
+
+                {/* Profit/loss breakdown grid */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, borderRadius: 10, overflow: "hidden", border: "1px solid var(--clr-border)" }}>
+                  {[
+                    ["Total Invested",   hidden ? "••••••" : `GHS ${totalCost.toLocaleString("en-GH",{minimumFractionDigits:2})}`,  "var(--clr-text)"],
+                    ["Market Value",     hidden ? "••••••" : `GHS ${marketVal.toLocaleString("en-GH",{minimumFractionDigits:2})}`,   "var(--clr-text)"],
+                    [inProfit ? "Total Profit" : "Total Loss",
+                                        hidden ? "••••"   : `${inProfit?"+":"-"}GHS ${Math.abs(profit).toLocaleString("en-GH",{minimumFractionDigits:2})}`,
+                                        inProfit ? "var(--clr-green)" : "var(--clr-red)"],
+                    ["Return %",        hidden ? "••••"   : `${profitPct >= 0 ? "+" : ""}${profitPct.toFixed(2)}%`,
+                                        col(profitPct)],
+                    ["Avg Cost / Share", hidden ? "••••"  : `GHS ${avgCost.toFixed(4)}`,                                            "var(--clr-text)"],
+                    [inProfit ? "Profit / Share" : "Loss / Share",
+                                        hidden ? "••••"   : `${inProfit?"+":"-"}GHS ${Math.abs(profitPerShare).toFixed(4)}`,
+                                        inProfit ? "var(--clr-green)" : "var(--clr-red)"],
+                  ].map(([lbl, val, clr], i) => (
+                    <div key={i} style={{ background: "var(--clr-card)", padding: "clamp(10px,2.8vw,13px) clamp(12px,3vw,16px)" }}>
+                      <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 4 }}>{lbl}</div>
+                      <div style={{ fontWeight: 700, fontSize: "var(--fs-md)", color: clr }}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* DCA section — only when at a loss and price is known */}
+              {!inProfit && cur < avgCost && (
+                <div style={{ margin: "0 var(--gutter,18px) var(--gap-md)", borderRadius: "var(--radius-card)", padding: "clamp(14px,3.5vw,18px)", background: "rgba(45,127,249,.06)", border: "1px solid rgba(45,127,249,.2)" }}>
+                  <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)", marginBottom: 4 }}>📉 Dollar Cost Averaging</div>
+                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", lineHeight: 1.65, marginBottom: 14 }}>
+                    Your avg cost (GHS {avgCost.toFixed(4)}) is above the current price (GHS {cur}). Buying more shares at the current price lowers your average cost, reducing the gap to break-even.
+                  </div>
+
+                  {/* Suggested: halve the gap */}
+                  {halfwayShares != null && halfwayShares > 0 && (
+                    <div style={{ background: "var(--clr-card)", borderRadius: 10, padding: "clamp(10px,2.8vw,14px)", marginBottom: 12, border: "1px solid var(--clr-border)" }}>
+                      <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.6, textTransform: "uppercase", marginBottom: 8, fontWeight: 700 }}>Suggested — Halve the gap</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                        {[
+                          ["Buy",         `${halfwayShares.toLocaleString()} shares`],
+                          ["Cost",        hidden ? "••••" : `GHS ${halfwayCost.toLocaleString("en-GH",{minimumFractionDigits:2})}`],
+                          ["New Avg",     hidden ? "••••" : `GHS ${halfwayNewAvg.toFixed(4)}`],
+                        ].map(([l,v]) => (
+                          <div key={l}>
+                            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginBottom: 3 }}>{l}</div>
+                            <div style={{ fontWeight: 700, fontSize: "var(--fs-base)" }}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Custom target avg cost */}
+                  <div style={{ background: "var(--clr-card)", borderRadius: 10, padding: "clamp(10px,2.8vw,14px)", border: "1px solid var(--clr-border)" }}>
+                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.6, textTransform: "uppercase", marginBottom: 8, fontWeight: 700 }}>Custom target avg cost</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-sm)", marginBottom: 10 }}>
+                      <span style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", whiteSpace: "nowrap" }}>Target avg (GHS)</span>
+                      <input
+                        type="number"
+                        value={dcaTarget}
+                        onChange={e => setDcaTarget(e.target.value)}
+                        placeholder={`${cur} – ${avgCost.toFixed(4)}`}
+                        style={{ ...S.input, flex: 1, marginBottom: 0, padding: "7px 10px", fontSize: "var(--fs-base)" }}
+                      />
+                    </div>
+                    {dcaShares != null && dcaShares > 0 ? (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                        {[
+                          ["Buy",         `${dcaShares.toLocaleString()} shares`],
+                          ["Cost",        hidden ? "••••" : `GHS ${dcaCost.toLocaleString("en-GH",{minimumFractionDigits:2})}`],
+                          ["New Avg",     hidden ? "••••" : `GHS ${dcaNewAvg.toFixed(4)}`],
+                        ].map(([l,v]) => (
+                          <div key={l}>
+                            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginBottom: 3 }}>{l}</div>
+                            <div style={{ fontWeight: 700, fontSize: "var(--fs-base)" }}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : dcaTarget && (parseFloat(dcaTarget) <= cur || parseFloat(dcaTarget) >= avgCost) ? (
+                      <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-red)" }}>
+                        {parseFloat(dcaTarget) <= cur
+                          ? `Target must be above current price (GHS ${cur}) — DCA can only bring avg down to current price.`
+                          : `Target must be below your current avg cost (GHS ${avgCost.toFixed(4)}).`}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>
+                        Enter a target between GHS {cur} and GHS {avgCost.toFixed(4)}.
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 10, lineHeight: 1.6 }}>
+                    Note: DCA reduces your average cost but increases total capital at risk. These figures exclude brokerage fees on the new purchase.
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* Purchase history */}
         <div className="section-label">Purchase History</div>
