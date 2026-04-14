@@ -1486,6 +1486,67 @@ function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
   );
 }
 
+// ─── PerfStockRow — top-level so hooks are stable across renders ──────────────
+function PerfStockRow({ s, refPrice, rdStr, editing, editVal, setEditing, setEditVal, saveRef }) {
+  const cur    = s.currentPrice;
+  const ref    = refPrice;
+  const change = cur != null && ref != null ? cur - ref : null;
+  const pct    = change != null && ref > 0   ? (change / ref) * 100 : null;
+  const hasRef = ref != null;
+  return (
+    <div style={{ background: "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(12px,3vw,15px) var(--gutter,18px)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-md)" }}>
+          <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: "var(--fs-lg)" }}>{s.symbol}</div>
+            <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 1 }}>{s.totalShares.toLocaleString()} shares</div>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          {cur != null
+            ? <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {cur}</div>
+            : <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>No price</div>}
+          {pct != null && (
+            <div style={{ ...S.changeBadge(pct), marginTop: 4, justifyContent: "flex-end" }}>
+              <Arrow value={pct} />{pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{ marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", gap: "var(--gap-sm)", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase" }}>Ref{rdStr ? ` (${rdStr})` : ""}</span>
+        {editing === s.symbol ? (
+          <>
+            <input autoFocus type="number" value={editVal}
+              onChange={e => setEditVal(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") saveRef(s.symbol); if (e.key === "Escape") { setEditing(null); setEditVal(""); } }}
+              style={{ ...S.input, width: 110, marginBottom: 0, padding: "5px 9px", fontSize: "var(--fs-base)" }}
+              placeholder="e.g. 0.45" />
+            <button onClick={() => saveRef(s.symbol)} style={{ background: "var(--clr-accent)", color: "#fff", border: "none", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: "var(--fs-sm)", cursor: "pointer" }}>✓</button>
+            <button onClick={() => { setEditing(null); setEditVal(""); }} style={{ background: "var(--clr-card)", color: "var(--clr-dim)", border: "1px solid var(--clr-border)", borderRadius: 8, padding: "5px 10px", fontSize: "var(--fs-sm)", cursor: "pointer" }}>✕</button>
+          </>
+        ) : (
+          <>
+            <span style={{ fontWeight: 700, fontSize: "var(--fs-base)", color: hasRef ? "var(--clr-text)" : "var(--clr-dim)" }}>
+              {hasRef ? `GHS ${ref}` : "—"}
+            </span>
+            {change != null && (
+              <span style={{ fontSize: "var(--fs-sm)", color: col(change) }}>
+                ({change >= 0 ? "+" : ""}GHS {Math.abs(change).toFixed(4)})
+              </span>
+            )}
+            <button onClick={() => { setEditing(s.symbol); setEditVal(ref != null ? String(ref) : ""); }}
+              style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-accent)", borderRadius: 7, padding: "3px 10px", fontSize: "var(--fs-xs)", cursor: "pointer", fontWeight: 600 }}>
+              {hasRef ? "Edit" : "Set"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Performance Screen ───────────────────────────────────────────────────────
 function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden }) {
   const now      = new Date();
@@ -1793,7 +1854,7 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
         <>
           <div className="section-label">Holdings · {stocks.length} stock{stocks.length !== 1 ? "s" : ""}</div>
           <div style={{ borderTop: "1px solid var(--clr-border)" }}>
-            {stocks.map(s => <StockRow key={s.symbol} s={s} />)}
+            {stocks.map(s => <PerfStockRow key={s.symbol} s={s} refPrice={refPrices[s.symbol]} rdStr={autoRefDate ?? ""} editing={editing} editVal={editVal} setEditing={setEditing} setEditVal={setEditVal} saveRef={saveRef} />)}
           </div>
           {(() => {
             const withRef = stocks.filter(s => refPrices[s.symbol] != null && s.currentPrice != null);
@@ -1824,153 +1885,6 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
     </div>
   );
 }
-
-  const [mode,       setMode]       = useState("ytd");   // "ytd" | "12m" | "custom"
-  const [customMths, setCustomMths] = useState("6");
-  const [refPrices,  setRefPrices]  = useState({});      // { SYMBOL: number }
-  const [editing,    setEditing]    = useState(null);    // symbol being edited
-  const [editVal,    setEditVal]    = useState("");
-  const [fetching,   setFetching]   = useState(false);
-  const [fetchMsg,   setFetchMsg]   = useState("");
-
-  const stocks = Object.values(portfolio);
-
-  // ── Period label ──────────────────────────────────────────────────────────
-  function periodLabel() {
-    if (mode === "ytd")    return `YTD (Jan 1, ${thisYear} → now)`;
-    if (mode === "12m")    return "Last 12 months";
-    const m = parseInt(customMths) || 1;
-    return `Last ${m} month${m !== 1 ? "s" : ""}`;
-  }
-
-  // ── Reference date for the selected period ────────────────────────────────
-  function refDate() {
-    if (mode === "ytd") return new Date(thisYear, 0, 1);   // Jan 1 this year
-    if (mode === "12m") {
-      const d = new Date(now);
-      d.setFullYear(d.getFullYear() - 1);
-      return d;
-    }
-    const m = parseInt(customMths) || 1;
-    const d = new Date(now);
-    d.setMonth(d.getMonth() - m);
-    return d;
-  }
-
-  // ── Fetch current prices from GSE API for all held stocks ─────────────────
-  async function fetchCurrentPrices() {
-    setFetching(true); setFetchMsg("");
-    try {
-      const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-      const data = await res.json();
-      const map  = {};
-      for (const item of data) map[item.name.toUpperCase()] = item.price;
-      // Update currentPrice on portfolio stocks via the parent — we just show what's already there
-      let found = 0;
-      for (const s of stocks) {
-        if (map[s.symbol] != null) found++;
-      }
-      setFetchMsg(`✓ Live prices available for ${found} of ${stocks.length} stock${stocks.length !== 1 ? "s" : ""}. Use "Fetch Live Prices" on the Stocks tab to update them.`);
-    } catch (err) {
-      setFetchMsg(`⚠ ${err.message}`);
-    }
-    setFetching(false);
-  }
-
-  // ── Save edited reference price ───────────────────────────────────────────
-  function saveRef(sym) {
-    const v = parseFloat(editVal);
-    if (!isNaN(v) && v > 0) setRefPrices(p => ({ ...p, [sym]: v }));
-    setEditing(null); setEditVal("");
-  }
-
-  const rd = refDate();
-  const rdStr = rd.toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" });
-
-  const selBtnStyle = active => ({
-    flex: 1, padding: "clamp(9px,2.5vw,12px) 6px", borderRadius: 10,
-    border: `1px solid ${active ? "var(--clr-accent)" : "var(--clr-border)"}`,
-    background: active ? "rgba(45,127,249,.15)" : "var(--clr-input-bg)",
-    color: active ? "var(--clr-accent)" : "var(--clr-text)",
-    fontWeight: 700, cursor: "pointer", fontSize: "var(--fs-sm)",
-    fontFamily: "'Brighter Sans', sans-serif",
-  });
-
-  // ── Per-stock row ─────────────────────────────────────────────────────────
-  function StockRow({ s }) {
-    const cur    = s.currentPrice;
-    const ref    = refPrices[s.symbol];
-    const change = cur != null && ref != null ? cur - ref : null;
-    const pct    = change != null && ref > 0   ? (change / ref) * 100 : null;
-    const hasRef = ref != null;
-
-    return (
-      <div style={{ background: "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(12px,3vw,15px) var(--gutter,18px)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          {/* Left: symbol + shares */}
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-md)" }}>
-            <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: "var(--fs-lg)" }}>{s.symbol}</div>
-              <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 1 }}>{s.totalShares.toLocaleString()} shares</div>
-            </div>
-          </div>
-
-          {/* Right: change badge */}
-          <div style={{ textAlign: "right" }}>
-            {cur != null
-              ? <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {cur}</div>
-              : <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>No price</div>}
-            {pct != null && (
-              <div style={{ ...S.changeBadge(pct), marginTop: 4, justifyContent: "flex-end" }}>
-                <Arrow value={pct} />
-                {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Reference price row */}
-        <div style={{ marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", gap: "var(--gap-sm)", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase" }}>
-            Ref price ({rdStr})
-          </span>
-          {editing === s.symbol ? (
-            <>
-              <input
-                autoFocus
-                type="number"
-                value={editVal}
-                onChange={e => setEditVal(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") saveRef(s.symbol); if (e.key === "Escape") { setEditing(null); setEditVal(""); } }}
-                style={{ ...S.input, width: 110, marginBottom: 0, padding: "5px 9px", fontSize: "var(--fs-base)" }}
-                placeholder="e.g. 0.45"
-              />
-              <button onClick={() => saveRef(s.symbol)} style={{ background: "var(--clr-accent)", color: "#fff", border: "none", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: "var(--fs-sm)", cursor: "pointer" }}>✓</button>
-              <button onClick={() => { setEditing(null); setEditVal(""); }} style={{ background: "var(--clr-card)", color: "var(--clr-dim)", border: "1px solid var(--clr-border)", borderRadius: 8, padding: "5px 10px", fontSize: "var(--fs-sm)", cursor: "pointer" }}>✕</button>
-            </>
-          ) : (
-            <>
-              <span style={{ fontWeight: 700, fontSize: "var(--fs-base)", color: hasRef ? "var(--clr-text)" : "var(--clr-dim)" }}>
-                {hasRef ? `GHS ${ref}` : "—"}
-              </span>
-              {change != null && (
-                <span style={{ fontSize: "var(--fs-sm)", color: col(change) }}>
-                  ({change >= 0 ? "+" : ""}GHS {Math.abs(change).toFixed(4)})
-                </span>
-              )}
-              <button
-                onClick={() => { setEditing(s.symbol); setEditVal(ref != null ? String(ref) : ""); }}
-                style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-accent)", borderRadius: 7, padding: "3px 10px", fontSize: "var(--fs-xs)", cursor: "pointer", fontWeight: 600 }}>
-                {hasRef ? "Edit" : "Set"}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
 
 // ─── Bottom Navigation ────────────────────────────────────────────────────────
 function BottomNav({ tab, setTab }) {
