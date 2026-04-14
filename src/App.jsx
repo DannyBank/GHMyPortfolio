@@ -71,8 +71,8 @@ const THEME_CSS = `
 `;
 
 // ─── IndexedDB helpers ───────────────────────────────────────────────────────
-const DB_NAME = "gse-portfolio", DB_VERSION = 2, STORE = "portfolio";
-const STORE_TB = "tbills", STORE_MF = "mutualfunds";
+const DB_NAME = "gse-portfolio", DB_VERSION = 3, STORE = "portfolio";
+const STORE_TB = "tbills", STORE_MF = "mutualfunds", STORE_PH = "price_history";
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -85,6 +85,12 @@ function openDB() {
         db.createObjectStore(STORE_TB, { keyPath: "id" });
       if (!db.objectStoreNames.contains(STORE_MF))
         db.createObjectStore(STORE_MF, { keyPath: "id" });
+      // price_history: id = "DATE|SYMBOL", indexed by date and symbol
+      if (!db.objectStoreNames.contains(STORE_PH)) {
+        const ph = db.createObjectStore(STORE_PH, { keyPath: "id" });
+        ph.createIndex("by_date",   "date",   { unique: false });
+        ph.createIndex("by_symbol", "symbol", { unique: false });
+      }
     };
     req.onsuccess = e => resolve(e.target.result);
     req.onerror   = e => reject(e.target.error);
@@ -118,6 +124,54 @@ async function storePut(storeName, record) {
 async function storeDelete(storeName, id) {
   const db = await openDB();
   return new Promise((res, rej) => { const r = db.transaction(storeName,"readwrite").objectStore(storeName).delete(id); r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error); });
+}
+
+// ─── Price History helpers ────────────────────────────────────────────────────
+// Each record: { id:"YYYY-MM-DD|SYMBOL", date:"YYYY-MM-DD", symbol, price, change, volume }
+async function phPut(record) {
+  const db = await openDB();
+  return new Promise((res, rej) => { const r = db.transaction(STORE_PH,"readwrite").objectStore(STORE_PH).put(record); r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error); });
+}
+async function phGetAll() {
+  const db = await openDB();
+  return new Promise((res, rej) => { const r = db.transaction(STORE_PH,"readonly").objectStore(STORE_PH).getAll(); r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error); });
+}
+async function phGetBySymbol(symbol) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const idx = db.transaction(STORE_PH,"readonly").objectStore(STORE_PH).index("by_symbol");
+    const r   = idx.getAll(symbol);
+    r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error);
+  });
+}
+async function phGetByDate(date) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const idx = db.transaction(STORE_PH,"readonly").objectStore(STORE_PH).index("by_date");
+    const r   = idx.getAll(date);
+    r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error);
+  });
+}
+// Save a full market snapshot (array of {name,price,change,volume}) for a given date
+async function phSaveSnapshot(dateStr, items) {
+  const db  = await openDB();
+  const tx  = db.transaction(STORE_PH, "readwrite");
+  const st  = tx.objectStore(STORE_PH);
+  for (const item of items) {
+    const sym = item.name.toUpperCase();
+    st.put({ id: `${dateStr}|${sym}`, date: dateStr, symbol: sym, price: item.price, change: item.change ?? 0, volume: item.volume ?? 0 });
+  }
+  return new Promise((res, rej) => { tx.oncomplete=()=>res(); tx.onerror=e=>rej(e.target.error); });
+}
+// Return all distinct dates in the archive, sorted descending
+async function phGetDates() {
+  const all = await phGetAll();
+  return [...new Set(all.map(r => r.date))].sort((a,b) => b.localeCompare(a));
+}
+// Find the closest archived date on or before a target date string "YYYY-MM-DD"
+async function phClosestDate(targetDateStr) {
+  const dates = await phGetDates();
+  return dates.find(d => d <= targetDateStr) ?? null;
 }
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
@@ -1432,6 +1486,492 @@ function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
   );
 }
 
+// ─── Performance Screen ───────────────────────────────────────────────────────
+function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden }) {
+  const now      = new Date();
+  const thisYear = now.getFullYear();
+
+  const [mode,        setMode]        = useState("ytd");
+  const [customMths,  setCustomMths]  = useState("6");
+  const [refPrices,   setRefPrices]   = useState({});   // { SYMBOL: number } — overrides
+  const [editing,     setEditing]     = useState(null);
+  const [editVal,     setEditVal]     = useState("");
+  const [archiveDates,setArchiveDates]= useState([]);   // sorted desc
+  const [archiveView, setArchiveView] = useState(false);// show archive browser
+  const [archiveDate, setArchiveDate] = useState(null); // selected date in browser
+  const [archiveRows, setArchiveRows] = useState([]);   // records for selected date
+  const [archiveSymRows,setArchiveSymRows]=useState([]); // records for selected symbol
+  const [archiveSym,  setArchiveSym]  = useState(null);
+  const [archiveTab,  setArchiveTab]  = useState("dates"); // "dates"|"symbol"
+  const [autoRefDate, setAutoRefDate] = useState(null); // closest archived date used
+  const [loadingRef,  setLoadingRef]  = useState(false);
+
+  const stocks = Object.values(portfolio);
+
+  // ── Load archive dates on mount ───────────────────────────────────────────
+  useEffect(() => {
+    phGetDates().then(setArchiveDates).catch(console.error);
+  }, []);
+
+  // ── Compute reference date string ─────────────────────────────────────────
+  function refDateStr() {
+    if (mode === "ytd") return `${thisYear}-01-01`;
+    const d = new Date(now);
+    if (mode === "12m") d.setFullYear(d.getFullYear() - 1);
+    else { const m = parseInt(customMths) || 1; d.setMonth(d.getMonth() - m); }
+    return d.toISOString().slice(0, 10);
+  }
+
+  function periodLabel() {
+    if (mode === "ytd") return `YTD (Jan 1, ${thisYear} → now)`;
+    if (mode === "12m") return "Last 12 months";
+    const m = parseInt(customMths) || 1;
+    return `Last ${m} month${m !== 1 ? "s" : ""}`;
+  }
+
+  // ── Auto-load ref prices from archive when mode/customMths changes ─────────
+  useEffect(() => {
+    async function load() {
+      setLoadingRef(true);
+      const target  = refDateStr();
+      const closest = await phClosestDate(target);
+      setAutoRefDate(closest);
+      if (!closest) { setLoadingRef(false); return; }
+      const rows = await phGetByDate(closest);
+      const map  = {};
+      for (const r of rows) map[r.symbol] = r.price;
+      // Only fill in symbols that don't have a manual override
+      setRefPrices(prev => {
+        const next = { ...prev };
+        for (const s of stocks) {
+          if (map[s.symbol] != null) next[s.symbol] = map[s.symbol];
+        }
+        return next;
+      });
+      setLoadingRef(false);
+    }
+    load().catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, customMths, archiveDates]);
+
+  // ── Archive browser loaders ───────────────────────────────────────────────
+  async function loadArchiveDate(date) {
+    setArchiveDate(date);
+    const rows = await phGetByDate(date);
+    setArchiveRows(rows.sort((a,b) => a.symbol.localeCompare(b.symbol)));
+  }
+  async function loadArchiveSym(sym) {
+    setArchiveSym(sym);
+    const rows = await phGetBySymbol(sym);
+    setArchiveSymRows(rows.sort((a,b) => b.date.localeCompare(a.date)));
+  }
+
+  function saveRef(sym) {
+    const v = parseFloat(editVal);
+    if (!isNaN(v) && v > 0) setRefPrices(p => ({ ...p, [sym]: v }));
+    setEditing(null); setEditVal("");
+  }
+
+  const selBtnStyle = active => ({
+    flex: 1, padding: "clamp(9px,2.5vw,12px) 6px", borderRadius: 10,
+    border: `1px solid ${active ? "var(--clr-accent)" : "var(--clr-border)"}`,
+    background: active ? "rgba(45,127,249,.15)" : "var(--clr-input-bg)",
+    color: active ? "var(--clr-accent)" : "var(--clr-text)",
+    fontWeight: 700, cursor: "pointer", fontSize: "var(--fs-sm)",
+    fontFamily: "'Brighter Sans', sans-serif",
+  });
+
+  // ── Archive browser view ──────────────────────────────────────────────────
+  if (archiveView) {
+    const allSymbols = [...new Set(stocks.map(s => s.symbol))].sort();
+    return (
+      <div style={S.root}>
+        <div style={S.header}>
+          <button className="back-btn" onClick={() => { setArchiveView(false); setArchiveDate(null); setArchiveSym(null); }}>← Back</button>
+          <div style={{ ...S.row, alignItems: "flex-start" }}>
+            <div>
+              <div style={S.label}>Price Archive</div>
+              <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5 }}>History</div>
+            </div>
+            <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", textAlign: "right" }}>
+              {archiveDates.length} day{archiveDates.length !== 1 ? "s" : ""} stored
+            </div>
+          </div>
+        </div>
+
+        {/* Tab: By Date / By Symbol */}
+        <div style={{ display: "flex", gap: "var(--gap-sm)", padding: "0 var(--gutter,18px) var(--gap-md)" }}>
+          {[["dates","By Date"],["symbol","By Symbol"]].map(([id,lbl]) => (
+            <button key={id} style={selBtnStyle(archiveTab === id)} onClick={() => { setArchiveTab(id); setArchiveDate(null); setArchiveSym(null); }}>{lbl}</button>
+          ))}
+        </div>
+
+        {archiveTab === "dates" && (
+          <>
+            {archiveDates.length === 0 && (
+              <div style={{ textAlign: "center", color: "var(--clr-dim)", marginTop: 60, fontSize: "var(--fs-md)", lineHeight: 1.8, padding: "0 var(--gutter,18px)" }}>
+                No snapshots yet.<br/>Tap "Fetch Live Prices" on the Stocks tab to start building your archive.
+              </div>
+            )}
+            {archiveDates.map(date => (
+              <div key={date}>
+                <div
+                  style={{ background: archiveDate === date ? "rgba(45,127,249,.08)" : "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(12px,3vw,15px) var(--gutter,18px)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                  onClick={() => archiveDate === date ? setArchiveDate(null) : loadArchiveDate(date)}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>{date}</div>
+                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 2 }}>
+                      {archiveDate === date ? `${archiveRows.length} symbols` : "tap to expand"}
+                    </div>
+                  </div>
+                  <span style={{ color: "var(--clr-dim)", fontSize: "var(--fs-lg)" }}>{archiveDate === date ? "▲" : "▼"}</span>
+                </div>
+                {archiveDate === date && archiveRows.map(r => (
+                  <div key={r.id} style={{ background: "var(--clr-bg)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(9px,2.5vw,12px) var(--gutter,18px) clamp(9px,2.5vw,12px) calc(var(--gutter,18px) + 16px)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontWeight: 600, fontSize: "var(--fs-base)" }}>{r.symbol}</div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {r.price}</div>
+                      <div style={{ ...S.changeBadge(r.change), fontSize: "var(--fs-xs)", marginTop: 2, justifyContent: "flex-end" }}>
+                        <Arrow value={r.change} />{r.change >= 0 ? "+" : ""}{r.change.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </>
+        )}
+
+        {archiveTab === "symbol" && (
+          <>
+            <div style={{ padding: "0 var(--gutter,18px) var(--gap-sm)" }}>
+              <div style={S.label}>Select Stock</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--gap-sm)" }}>
+                {allSymbols.map(sym => (
+                  <button key={sym} onClick={() => loadArchiveSym(sym)}
+                    style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${archiveSym === sym ? "var(--clr-accent)" : "var(--clr-border)"}`, background: archiveSym === sym ? "rgba(45,127,249,.15)" : "var(--clr-input-bg)", color: archiveSym === sym ? "var(--clr-accent)" : "var(--clr-text)", fontWeight: 700, fontSize: "var(--fs-sm)", cursor: "pointer" }}>
+                    {sym}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {archiveSym && archiveSymRows.length === 0 && (
+              <div style={{ textAlign: "center", color: "var(--clr-dim)", marginTop: 40, fontSize: "var(--fs-md)" }}>No archive data for {archiveSym} yet.</div>
+            )}
+            {archiveSym && archiveSymRows.map(r => (
+              <div key={r.id} style={{ background: "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(11px,3vw,14px) var(--gutter,18px)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 600, fontSize: "var(--fs-base)", color: "var(--clr-dim)" }}>{r.date}</div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {r.price}</div>
+                  <div style={{ ...S.changeBadge(r.change), fontSize: "var(--fs-xs)", marginTop: 2, justifyContent: "flex-end" }}>
+                    <Arrow value={r.change} />{r.change >= 0 ? "+" : ""}{r.change.toFixed(2)}%
+                  </div>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ── Main performance view ─────────────────────────────────────────────────
+  const rdTarget = refDateStr();
+  const rdDisplay = autoRefDate
+    ? `${autoRefDate}${autoRefDate !== rdTarget ? ` (closest to ${rdTarget})` : ""}`
+    : rdTarget;
+
+  function StockRow({ s }) {
+    const cur    = s.currentPrice;
+    const ref    = refPrices[s.symbol];
+    const change = cur != null && ref != null ? cur - ref : null;
+    const pct    = change != null && ref > 0   ? (change / ref) * 100 : null;
+    const hasRef = ref != null;
+    return (
+      <div style={{ background: "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(12px,3vw,15px) var(--gutter,18px)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-md)" }}>
+            <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "var(--fs-lg)" }}>{s.symbol}</div>
+              <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 1 }}>{s.totalShares.toLocaleString()} shares</div>
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            {cur != null
+              ? <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {cur}</div>
+              : <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>No price</div>}
+            {pct != null && (
+              <div style={{ ...S.changeBadge(pct), marginTop: 4, justifyContent: "flex-end" }}>
+                <Arrow value={pct} />{pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", gap: "var(--gap-sm)", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase" }}>Ref</span>
+          {editing === s.symbol ? (
+            <>
+              <input autoFocus type="number" value={editVal}
+                onChange={e => setEditVal(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") saveRef(s.symbol); if (e.key === "Escape") { setEditing(null); setEditVal(""); } }}
+                style={{ ...S.input, width: 110, marginBottom: 0, padding: "5px 9px", fontSize: "var(--fs-base)" }}
+                placeholder="e.g. 0.45" />
+              <button onClick={() => saveRef(s.symbol)} style={{ background: "var(--clr-accent)", color: "#fff", border: "none", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: "var(--fs-sm)", cursor: "pointer" }}>✓</button>
+              <button onClick={() => { setEditing(null); setEditVal(""); }} style={{ background: "var(--clr-card)", color: "var(--clr-dim)", border: "1px solid var(--clr-border)", borderRadius: 8, padding: "5px 10px", fontSize: "var(--fs-sm)", cursor: "pointer" }}>✕</button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontWeight: 700, fontSize: "var(--fs-base)", color: hasRef ? "var(--clr-text)" : "var(--clr-dim)" }}>
+                {hasRef ? `GHS ${ref}` : "—"}
+              </span>
+              {change != null && (
+                <span style={{ fontSize: "var(--fs-sm)", color: col(change) }}>
+                  ({change >= 0 ? "+" : ""}GHS {Math.abs(change).toFixed(4)})
+                </span>
+              )}
+              <button onClick={() => { setEditing(s.symbol); setEditVal(ref != null ? String(ref) : ""); }}
+                style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-accent)", borderRadius: 7, padding: "3px 10px", fontSize: "var(--fs-xs)", cursor: "pointer", fontWeight: 600 }}>
+                {hasRef ? "Edit" : "Set"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={S.root}>
+      <div style={S.header}>
+        <div style={{ ...S.row, alignItems: "flex-start" }}>
+          <div>
+            <div style={S.label}>IC Securities · GSE</div>
+            <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>Performance</div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
+            <button className="theme-btn" onClick={() => setLightTheme(t => !t)}>{lightTheme ? "🌙" : "☀️"}</button>
+            <button className="eye-btn" onClick={() => setHidden(h => !h)}>{hidden ? <EyeOffIcon /> : <EyeIcon />}</button>
+            <button onClick={() => { setArchiveView(true); phGetDates().then(setArchiveDates).catch(console.error); }}
+              style={{ background: "rgba(245,166,35,.12)", border: "1px solid rgba(245,166,35,.3)", color: "var(--clr-gold)", borderRadius: 10, padding: "clamp(4px,1.5vw,7px) clamp(9px,2.5vw,12px)", fontWeight: 700, fontSize: "var(--fs-sm)", cursor: "pointer" }}>
+              📅 Archive
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: "0 var(--gutter,18px) var(--gap-md)" }}>
+        <div style={S.label}>Period</div>
+        <div style={{ display: "flex", gap: "var(--gap-sm)", marginBottom: "var(--gap-sm)" }}>
+          {[["ytd","YTD"],["12m","12 Months"],["custom","Custom"]].map(([id, lbl]) => (
+            <button key={id} style={selBtnStyle(mode === id)} onClick={() => setMode(id)}>{lbl}</button>
+          ))}
+        </div>
+        {mode === "custom" && (
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-sm)", marginBottom: "var(--gap-sm)" }}>
+            <span style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)" }}>Last</span>
+            <input type="number" min="1" max="120" value={customMths} onChange={e => setCustomMths(e.target.value)}
+              style={{ ...S.input, width: 80, marginBottom: 0, padding: "8px 10px", fontSize: "var(--fs-md)", textAlign: "center" }} />
+            <span style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)" }}>month{parseInt(customMths) !== 1 ? "s" : ""}</span>
+          </div>
+        )}
+        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.2, marginBottom: "var(--gap-sm)" }}>
+          {periodLabel()} · {loadingRef ? "Loading archive…" : autoRefDate ? `Archive date: ${rdDisplay}` : `No archive data near ${rdTarget} — set prices manually`}
+        </div>
+        {archiveDates.length === 0 && (
+          <div className="notice-box" style={{ marginBottom: "var(--gap-sm)" }}>
+            No price archive yet. Tap "Fetch Live Prices" on the Stocks tab each trading day to build your history. Reference prices will auto-populate once data is available.
+          </div>
+        )}
+      </div>
+
+      {stocks.length === 0 ? (
+        <div style={{ textAlign: "center", color: "var(--clr-dim)", marginTop: "clamp(40px,10vw,72px)", fontSize: "var(--fs-md)", lineHeight: 1.8, padding: "0 var(--gutter,18px)" }}>
+          No stocks in portfolio yet.<br />Import a PDF or add stocks manually.
+        </div>
+      ) : (
+        <>
+          <div className="section-label">Holdings · {stocks.length} stock{stocks.length !== 1 ? "s" : ""}</div>
+          <div style={{ borderTop: "1px solid var(--clr-border)" }}>
+            {stocks.map(s => <StockRow key={s.symbol} s={s} />)}
+          </div>
+          {(() => {
+            const withRef = stocks.filter(s => refPrices[s.symbol] != null && s.currentPrice != null);
+            if (withRef.length === 0) return null;
+            const totalCur = withRef.reduce((sum, s) => sum + s.currentPrice * s.totalShares, 0);
+            const totalRef = withRef.reduce((sum, s) => sum + refPrices[s.symbol] * s.totalShares, 0);
+            const totalChg = totalCur - totalRef;
+            const totalPct = totalRef > 0 ? (totalChg / totalRef) * 100 : 0;
+            return (
+              <div style={{ ...S.hero, marginTop: "var(--gap-md)" }}>
+                <div style={S.label}>{periodLabel()} · {withRef.length}/{stocks.length} stocks</div>
+                <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${totalCur.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}</div>
+                <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
+                  <div>
+                    <div style={S.label}>Change (GHS)</div>
+                    <div style={{ color: hidden ? "var(--clr-dim)" : col(totalChg), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : fmtGHS(totalChg)}</div>
+                  </div>
+                  <div>
+                    <div style={S.label}>Change (%)</div>
+                    <div style={{ color: hidden ? "var(--clr-dim)" : col(totalPct), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : fmtPct(totalPct)}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </>
+      )}
+    </div>
+  );
+}
+
+  const [mode,       setMode]       = useState("ytd");   // "ytd" | "12m" | "custom"
+  const [customMths, setCustomMths] = useState("6");
+  const [refPrices,  setRefPrices]  = useState({});      // { SYMBOL: number }
+  const [editing,    setEditing]    = useState(null);    // symbol being edited
+  const [editVal,    setEditVal]    = useState("");
+  const [fetching,   setFetching]   = useState(false);
+  const [fetchMsg,   setFetchMsg]   = useState("");
+
+  const stocks = Object.values(portfolio);
+
+  // ── Period label ──────────────────────────────────────────────────────────
+  function periodLabel() {
+    if (mode === "ytd")    return `YTD (Jan 1, ${thisYear} → now)`;
+    if (mode === "12m")    return "Last 12 months";
+    const m = parseInt(customMths) || 1;
+    return `Last ${m} month${m !== 1 ? "s" : ""}`;
+  }
+
+  // ── Reference date for the selected period ────────────────────────────────
+  function refDate() {
+    if (mode === "ytd") return new Date(thisYear, 0, 1);   // Jan 1 this year
+    if (mode === "12m") {
+      const d = new Date(now);
+      d.setFullYear(d.getFullYear() - 1);
+      return d;
+    }
+    const m = parseInt(customMths) || 1;
+    const d = new Date(now);
+    d.setMonth(d.getMonth() - m);
+    return d;
+  }
+
+  // ── Fetch current prices from GSE API for all held stocks ─────────────────
+  async function fetchCurrentPrices() {
+    setFetching(true); setFetchMsg("");
+    try {
+      const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
+      if (!res.ok) throw new Error(`API error ${res.status}`);
+      const data = await res.json();
+      const map  = {};
+      for (const item of data) map[item.name.toUpperCase()] = item.price;
+      // Update currentPrice on portfolio stocks via the parent — we just show what's already there
+      let found = 0;
+      for (const s of stocks) {
+        if (map[s.symbol] != null) found++;
+      }
+      setFetchMsg(`✓ Live prices available for ${found} of ${stocks.length} stock${stocks.length !== 1 ? "s" : ""}. Use "Fetch Live Prices" on the Stocks tab to update them.`);
+    } catch (err) {
+      setFetchMsg(`⚠ ${err.message}`);
+    }
+    setFetching(false);
+  }
+
+  // ── Save edited reference price ───────────────────────────────────────────
+  function saveRef(sym) {
+    const v = parseFloat(editVal);
+    if (!isNaN(v) && v > 0) setRefPrices(p => ({ ...p, [sym]: v }));
+    setEditing(null); setEditVal("");
+  }
+
+  const rd = refDate();
+  const rdStr = rd.toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" });
+
+  const selBtnStyle = active => ({
+    flex: 1, padding: "clamp(9px,2.5vw,12px) 6px", borderRadius: 10,
+    border: `1px solid ${active ? "var(--clr-accent)" : "var(--clr-border)"}`,
+    background: active ? "rgba(45,127,249,.15)" : "var(--clr-input-bg)",
+    color: active ? "var(--clr-accent)" : "var(--clr-text)",
+    fontWeight: 700, cursor: "pointer", fontSize: "var(--fs-sm)",
+    fontFamily: "'Brighter Sans', sans-serif",
+  });
+
+  // ── Per-stock row ─────────────────────────────────────────────────────────
+  function StockRow({ s }) {
+    const cur    = s.currentPrice;
+    const ref    = refPrices[s.symbol];
+    const change = cur != null && ref != null ? cur - ref : null;
+    const pct    = change != null && ref > 0   ? (change / ref) * 100 : null;
+    const hasRef = ref != null;
+
+    return (
+      <div style={{ background: "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(12px,3vw,15px) var(--gutter,18px)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          {/* Left: symbol + shares */}
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-md)" }}>
+            <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "var(--fs-lg)" }}>{s.symbol}</div>
+              <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 1 }}>{s.totalShares.toLocaleString()} shares</div>
+            </div>
+          </div>
+
+          {/* Right: change badge */}
+          <div style={{ textAlign: "right" }}>
+            {cur != null
+              ? <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>GHS {cur}</div>
+              : <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>No price</div>}
+            {pct != null && (
+              <div style={{ ...S.changeBadge(pct), marginTop: 4, justifyContent: "flex-end" }}>
+                <Arrow value={pct} />
+                {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Reference price row */}
+        <div style={{ marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", gap: "var(--gap-sm)", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase" }}>
+            Ref price ({rdStr})
+          </span>
+          {editing === s.symbol ? (
+            <>
+              <input
+                autoFocus
+                type="number"
+                value={editVal}
+                onChange={e => setEditVal(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") saveRef(s.symbol); if (e.key === "Escape") { setEditing(null); setEditVal(""); } }}
+                style={{ ...S.input, width: 110, marginBottom: 0, padding: "5px 9px", fontSize: "var(--fs-base)" }}
+                placeholder="e.g. 0.45"
+              />
+              <button onClick={() => saveRef(s.symbol)} style={{ background: "var(--clr-accent)", color: "#fff", border: "none", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: "var(--fs-sm)", cursor: "pointer" }}>✓</button>
+              <button onClick={() => { setEditing(null); setEditVal(""); }} style={{ background: "var(--clr-card)", color: "var(--clr-dim)", border: "1px solid var(--clr-border)", borderRadius: 8, padding: "5px 10px", fontSize: "var(--fs-sm)", cursor: "pointer" }}>✕</button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontWeight: 700, fontSize: "var(--fs-base)", color: hasRef ? "var(--clr-text)" : "var(--clr-dim)" }}>
+                {hasRef ? `GHS ${ref}` : "—"}
+              </span>
+              {change != null && (
+                <span style={{ fontSize: "var(--fs-sm)", color: col(change) }}>
+                  ({change >= 0 ? "+" : ""}GHS {Math.abs(change).toFixed(4)})
+                </span>
+              )}
+              <button
+                onClick={() => { setEditing(s.symbol); setEditVal(ref != null ? String(ref) : ""); }}
+                style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-accent)", borderRadius: 7, padding: "3px 10px", fontSize: "var(--fs-xs)", cursor: "pointer", fontWeight: 600 }}>
+                {hasRef ? "Edit" : "Set"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
 // ─── Bottom Navigation ────────────────────────────────────────────────────────
 function BottomNav({ tab, setTab }) {
   const items = [
@@ -1439,6 +1979,7 @@ function BottomNav({ tab, setTab }) {
     { id: "tbills",      label: "T-Bills",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
     { id: "mutualfunds", label: "Funds",    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg> },
     { id: "summary",     label: "Summary",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> },
+    { id: "perf",        label: "Perf",     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg> },
     { id: "analyse",     label: "Analyse",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg> },
   ];
   return (
@@ -2210,6 +2751,10 @@ export default function App() {
       // Store full snapshot (sorted by % change desc) for market prices page
       const snapshot = [...data].sort((a, b) => b.change - a.change);
       setLiveSnapshot({ items: snapshot, fetchedAt: new Date() });
+      // ── Archive today's prices ──────────────────────────────────────────
+      const dateStr = today();
+      phSaveSnapshot(dateStr, data).catch(console.error);
+      // ───────────────────────────────────────────────────────────────────
       const priceMap = {};
       for (const item of data) priceMap[item.name.toUpperCase()] = { price: item.price, prevPrice: item.change !== 0 ? item.price / (1 + item.change / 100) : item.price, dayChangePct: item.change };
       let matched = 0, unmatched = [];
@@ -2382,6 +2927,13 @@ export default function App() {
     <>
       <SummaryScreen portfolio={portfolio} tbills={tbills} mfunds={mfunds}
         hidden={hidden} setHidden={setHidden} lightTheme={lightTheme} setLightTheme={setLightTheme} />
+      <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
+    </>
+  );
+
+  if (navTab === "perf") return (
+    <>
+      <PerformanceScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
   );
