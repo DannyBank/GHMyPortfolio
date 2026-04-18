@@ -897,7 +897,7 @@ function EyeOffIcon() {
 }
 
 // ─── Stock Analysis Screen ────────────────────────────────────────────────────
-function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
+function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden }) {
 
   // ── Input state ───────────────────────────────────────────────────────────
   const [symbol,        setSymbol]        = useState("");
@@ -1475,6 +1475,183 @@ function StockAnalysisScreen({ lightTheme, setLightTheme, hidden, setHidden }) {
               <div className="insight-body">{ins.body}</div>
             </div>
           ))}
+
+          {/* ── Portfolio Position & Drop Scenario ── */}
+          {(() => {
+            const sym  = symbol.trim().toUpperCase();
+            const held = portfolio?.[sym];
+            if (!held || !cur) return null;
+
+            const heldShares   = held.totalShares;
+            const heldCost     = held.totalCost;
+            const heldAvgCost  = held.avgCost;
+            const heldMktVal   = cur * heldShares;
+            const heldPnl      = heldMktVal - heldCost;
+            const heldPnlPct   = heldCost ? (heldPnl / heldCost) * 100 : 0;
+            const inProfit     = heldPnl >= 0;
+
+            // Drop scenario: for each fib level BELOW current price, calculate DCA
+            // How many shares to buy at that price so new avgCost = that fib price
+            // Formula: n = (heldCost - targetAvg * heldShares) / (targetAvg - dropPrice)
+            // Since targetAvg = dropPrice (we want to bring avg down to the drop price):
+            // n = (heldCost - dropPrice * heldShares) / (dropPrice - dropPrice) → undefined
+            // Better goal: buy enough so new avgCost = midpoint between dropPrice and heldAvgCost
+            // Or: show a fixed-amount scenario — "if you invest GHS X at this price"
+            // Most useful: for each fib level below cur, show:
+            //   - shares to buy to bring avgCost to THAT fib level (if fib < heldAvgCost)
+            //   - shares to buy to bring avgCost to HALFWAY between fib and heldAvgCost
+            //   - cost of that purchase
+            const dropLevels = fibLevels
+              .filter(f => f.price < cur && f.price > 0 && f.ratio > 0 && f.ratio < 1)
+              .map(f => {
+                const dropPx = f.price;
+                // Target: bring avgCost to this fib level (only possible if dropPx < heldAvgCost)
+                // n = (heldCost - dropPx * heldShares) / (dropPx - dropPx) → impossible (div by 0)
+                // Correct: new avg = (heldCost + n*dropPx) / (heldShares + n) = dropPx
+                // → heldCost + n*dropPx = dropPx*heldShares + n*dropPx → heldCost = dropPx*heldShares → impossible
+                // The avg can never reach the buy price — it can only approach it asymptotically.
+                // Practical targets:
+                //   A) Bring avgCost to halfway between dropPx and current heldAvgCost
+                //   B) Bring avgCost to 10% above dropPx (a realistic near-break-even target)
+                const targetA  = dropPx + (heldAvgCost - dropPx) / 2;  // halfway
+                const targetB  = dropPx * 1.10;                          // 10% above drop price
+                const calcShares = (target) => {
+                  if (target <= dropPx || target >= heldAvgCost) return null;
+                  return Math.ceil((heldCost - target * heldShares) / (target - dropPx));
+                };
+                const sharesA  = calcShares(targetA);
+                const sharesB  = calcShares(Math.min(targetB, heldAvgCost * 0.999));
+                const newAvgA  = sharesA != null ? (heldCost + sharesA * dropPx) / (heldShares + sharesA) : null;
+                const newAvgB  = sharesB != null ? (heldCost + sharesB * dropPx) / (heldShares + sharesB) : null;
+                return { fib: f, dropPx, sharesA, costA: sharesA != null ? sharesA * dropPx : null, newAvgA, sharesB, costB: sharesB != null ? sharesB * dropPx : null, newAvgB };
+              });
+
+            const fmtN = v => v.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+            return (
+              <>
+                <div className="section-label" style={{ marginTop: "var(--gap-md)" }}>Your {sym} Position</div>
+
+                {/* Current holding summary */}
+                <div style={{ margin: "0 var(--gutter,18px) var(--gap-md)", borderRadius: "var(--radius-card)", padding: "clamp(14px,3.5vw,18px)", background: inProfit ? "rgba(0,200,83,.07)" : "rgba(245,34,45,.07)", border: `1px solid ${inProfit ? "rgba(0,200,83,.25)" : "rgba(245,34,45,.25)"}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <span style={{ fontSize: "clamp(18px,4.5vw,22px)" }}>{inProfit ? "✅" : "⚠️"}</span>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)", color: inProfit ? "var(--clr-green)" : "var(--clr-red)" }}>
+                        {inProfit ? "Currently in profit" : "Currently at a loss"}
+                      </div>
+                      <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 2 }}>
+                        {heldShares.toLocaleString()} shares · avg cost GHS {heldAvgCost.toFixed(4)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 1, borderRadius: 10, overflow: "hidden", border: "1px solid var(--clr-border)" }}>
+                    {[
+                      ["Shares",       heldShares.toLocaleString(),                                                    "var(--clr-text)"],
+                      ["Avg Cost",     hidden ? "••••" : `GHS ${heldAvgCost.toFixed(4)}`,                              "var(--clr-text)"],
+                      ["Mkt Value",    hidden ? "••••" : `GHS ${fmtN(heldMktVal)}`,                                    "var(--clr-text)"],
+                      ["Invested",     hidden ? "••••" : `GHS ${fmtN(heldCost)}`,                                      "var(--clr-dim)"],
+                      [inProfit ? "Profit" : "Loss",
+                                       hidden ? "••••" : `${inProfit?"+":"-"}GHS ${fmtN(Math.abs(heldPnl))}`,         inProfit ? "var(--clr-green)" : "var(--clr-red)"],
+                      ["Return",       hidden ? "••••" : `${heldPnlPct >= 0 ? "+" : ""}${heldPnlPct.toFixed(2)}%`,    col(heldPnlPct)],
+                    ].map(([lbl, val, clr]) => (
+                      <div key={lbl} style={{ background: "var(--clr-card)", padding: "clamp(9px,2.5vw,12px) clamp(10px,2.8vw,14px)" }}>
+                        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.3, textTransform: "uppercase", marginBottom: 3 }}>{lbl}</div>
+                        <div style={{ fontWeight: 700, fontSize: "var(--fs-sm)", color: clr }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Drop scenario table */}
+                {dropLevels.length > 0 && (
+                  <>
+                    <div style={{ padding: "0 var(--gutter,18px)", marginBottom: "var(--gap-sm)" }}>
+                      <div style={{ fontWeight: 800, fontSize: "var(--fs-md)", marginBottom: 4 }}>📉 If the price keeps dropping — DCA plan</div>
+                      <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", lineHeight: 1.6 }}>
+                        For each Fibonacci support level below the current price, this shows two buying options to reduce your average cost if you choose to add at that level.
+                      </div>
+                    </div>
+
+                    {dropLevels.map(({ fib, dropPx, sharesA, costA, newAvgA, sharesB, costB, newAvgB }) => (
+                      <div key={fib.label} style={{ margin: "0 var(--gutter,18px) var(--gap-sm)", borderRadius: "var(--radius-card)", border: "1px solid var(--clr-border)", overflow: "hidden" }}>
+                        {/* Level header */}
+                        <div style={{ background: "rgba(45,127,249,.08)", padding: "clamp(9px,2.5vw,12px) clamp(12px,3vw,16px)", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--clr-border)" }}>
+                          <div>
+                            <span style={{ fontWeight: 800, fontSize: "var(--fs-md)", color: "var(--clr-accent)" }}>Fib {fib.label}</span>
+                            <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginLeft: 8 }}>
+                              {fib.ratio === 0.382 ? "Key support" : fib.ratio === 0.5 ? "Mid support" : fib.ratio === 0.618 ? "Golden ratio ★" : fib.ratio === 0.786 ? "Deep support" : "Support"}
+                            </span>
+                          </div>
+                          <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)" }}>GHS {fmtN(dropPx)}</div>
+                        </div>
+
+                        {/* Two options side by side */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", background: "var(--clr-card)" }}>
+                          {/* Option A: halve the gap */}
+                          <div style={{ padding: "clamp(10px,2.8vw,14px) clamp(12px,3vw,16px)", borderRight: "1px solid var(--clr-border)" }}>
+                            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 8, fontWeight: 700 }}>Option A — Halve gap</div>
+                            {sharesA != null && sharesA > 0 ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                {[
+                                  ["Buy",      `${sharesA.toLocaleString()} shares`],
+                                  ["Cost",     hidden ? "••••" : `GHS ${fmtN(costA)}`],
+                                  ["New avg",  hidden ? "••••" : `GHS ${newAvgA.toFixed(4)}`],
+                                  ["Gap ↓",    `${(((heldAvgCost - newAvgA) / heldAvgCost) * 100).toFixed(1)}%`],
+                                ].map(([l, v]) => (
+                                  <div key={l} style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>{l}</span>
+                                    <span style={{ fontWeight: 700, fontSize: "var(--fs-sm)" }}>{v}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>
+                                {dropPx >= heldAvgCost ? "Price above avg cost — no DCA needed" : "Not applicable"}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Option B: bring avg to 10% above drop price */}
+                          <div style={{ padding: "clamp(10px,2.8vw,14px) clamp(12px,3vw,16px)" }}>
+                            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-gold)", letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 8, fontWeight: 700 }}>Option B — Aggressive</div>
+                            {sharesB != null && sharesB > 0 ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                {[
+                                  ["Buy",      `${sharesB.toLocaleString()} shares`],
+                                  ["Cost",     hidden ? "••••" : `GHS ${fmtN(costB)}`],
+                                  ["New avg",  hidden ? "••••" : `GHS ${newAvgB.toFixed(4)}`],
+                                  ["Gap ↓",    `${(((heldAvgCost - newAvgB) / heldAvgCost) * 100).toFixed(1)}%`],
+                                ].map(([l, v]) => (
+                                  <div key={l} style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>{l}</span>
+                                    <span style={{ fontWeight: 700, fontSize: "var(--fs-sm)" }}>{v}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>
+                                {dropPx >= heldAvgCost ? "Price above avg cost" : "Not applicable"}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Context note */}
+                        <div style={{ padding: "clamp(7px,2vw,9px) clamp(12px,3vw,16px)", background: "var(--clr-bg)", borderTop: "1px solid var(--clr-border)", fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>
+                          Option A brings avg cost halfway to this level. Option B brings it to 10% above this level (more aggressive). Figures exclude brokerage fees.
+                        </div>
+                      </div>
+                    ))}
+
+                    <div style={{ padding: "0 var(--gutter,18px) var(--gap-md)", fontSize: "var(--fs-xs)", color: "var(--clr-dim)", lineHeight: 1.65 }}>
+                      ⚠️ DCA only makes sense if you believe the stock will recover. Buying into a falling stock increases your capital at risk. Only add at levels where the technical analysis above shows genuine support forming.
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
 
           {/* Disclaimer */}
           <div style={{ padding: "clamp(12px,3vw,16px) var(--gutter,18px)", fontSize: "var(--fs-xs)", color: "var(--clr-dim)", lineHeight: 1.65, borderTop: "1px solid var(--clr-border)", marginTop: "var(--gap-md)" }}>
@@ -2796,7 +2973,7 @@ export default function App() {
 
   if (navTab === "analyse") return (
     <>
-      <StockAnalysisScreen lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} />
+      <StockAnalysisScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
   );
