@@ -2611,7 +2611,7 @@ export default function App() {
   const [lastUpdated,    setLastUpdated]    = useState(null);
   const [exportOpen,     setExportOpen]     = useState(false);
   const [confirmClear,   setConfirmClear]   = useState(false);
-  const [hidden,         setHidden]         = useState(false);
+  const [hidden,         setHidden]         = useState(true);
   const [liveSnapshot,   setLiveSnapshot]   = useState(null);
   const [showMarket,     setShowMarket]     = useState(false);
   const [lightTheme,     setLightTheme]     = useState(false);
