@@ -1663,6 +1663,195 @@ function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, set
   );
 }
 
+// ─── Monthly Purchases Screen ────────────────────────────────────────────────
+function MonthlyScreen({ portfolio, hidden, setHidden, lightTheme, setLightTheme }) {
+  const [expanded, setExpanded] = useState(null); // "YYYY-MM" key of open month
+
+  // ── Collect & group all trades by month ───────────────────────────────────
+  const allTrades = [];
+  for (const s of Object.values(portfolio)) {
+    for (const t of s.trades) {
+      // Normalise date to YYYY-MM-DD for sorting
+      let iso = t.date;
+      if (t.date && t.date.includes("/")) {
+        const parts = t.date.split("/");
+        if (parts.length === 3) {
+          // DD/MM/YYYY
+          iso = `${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`;
+        }
+      }
+      const monthKey = iso.slice(0, 7); // "YYYY-MM"
+      allTrades.push({ ...t, iso, monthKey });
+    }
+  }
+
+  // Group by month
+  const monthMap = {};
+  for (const t of allTrades) {
+    if (!monthMap[t.monthKey]) monthMap[t.monthKey] = [];
+    monthMap[t.monthKey].push(t);
+  }
+
+  // Sort months descending
+  const months = Object.keys(monthMap).sort((a, b) => b.localeCompare(a));
+
+  // Summary totals
+  const totalTrades   = allTrades.length;
+  const totalInvested = allTrades.reduce((s, t) => s + (t.consideration ?? 0) + (t.charges ?? 0), 0);
+  const totalShares   = allTrades.reduce((s, t) => s + (t.shares ?? 0), 0);
+
+  function monthLabel(key) {
+    const [y, m] = key.split("-");
+    return new Date(parseInt(y), parseInt(m) - 1, 1)
+      .toLocaleDateString("en-GH", { month: "long", year: "numeric" });
+  }
+
+  const fmtGHSPlain = v => `GHS ${v.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return (
+    <div style={S.root}>
+      {/* Header */}
+      <div style={S.header}>
+        <div style={{ ...S.row, alignItems: "flex-start" }}>
+          <div>
+            <div style={S.label}>IC Securities · GSE</div>
+            <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>Monthly Purchases</div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
+            <button className="theme-btn" onClick={() => setLightTheme(t => !t)}>{lightTheme ? "🌙" : "☀️"}</button>
+            <button className="eye-btn" onClick={() => setHidden(h => !h)}>{hidden ? <EyeOffIcon /> : <EyeIcon />}</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Summary hero */}
+      {months.length > 0 && (
+        <div style={S.hero}>
+          <div style={S.label}>All-time Purchase Summary</div>
+          <div style={S.bigNum}>{hidden ? "••••••" : fmtGHSPlain(totalInvested)}</div>
+          <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
+            <div>
+              <div style={S.label}>Transactions</div>
+              <div style={{ fontWeight: 700, fontSize: "var(--fs-xl)" }}>{totalTrades}</div>
+            </div>
+            <div>
+              <div style={S.label}>Total Shares</div>
+              <div style={{ fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : totalShares.toLocaleString()}</div>
+            </div>
+            <div>
+              <div style={S.label}>Active Months</div>
+              <div style={{ fontWeight: 700, fontSize: "var(--fs-xl)" }}>{months.length}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {months.length === 0 && (
+        <div style={{ textAlign: "center", color: "var(--clr-dim)", marginTop: "clamp(40px,10vw,72px)", fontSize: "var(--fs-md)", lineHeight: 1.8, padding: "0 var(--gutter,18px)" }}>
+          No purchases yet.<br />Import a PDF statement or add stocks manually.
+        </div>
+      )}
+
+      {/* Month list */}
+      {months.length > 0 && <div className="section-label">{months.length} month{months.length !== 1 ? "s" : ""} of activity</div>}
+      <div style={{ borderTop: months.length > 0 ? "1px solid var(--clr-border)" : "none" }}>
+        {months.map(key => {
+          const trades   = monthMap[key];
+          const isOpen   = expanded === key;
+          const mTotal   = trades.reduce((s, t) => s + (t.consideration ?? 0) + (t.charges ?? 0), 0);
+          const mShares  = trades.reduce((s, t) => s + (t.shares ?? 0), 0);
+
+          // Group trades within month by symbol
+          const symMap = {};
+          for (const t of trades) {
+            if (!symMap[t.symbol]) symMap[t.symbol] = { shares: 0, cost: 0, trades: [] };
+            symMap[t.symbol].shares += t.shares ?? 0;
+            symMap[t.symbol].cost   += (t.consideration ?? 0) + (t.charges ?? 0);
+            symMap[t.symbol].trades.push(t);
+          }
+          const syms = Object.entries(symMap).sort((a, b) => b[1].cost - a[1].cost);
+
+          return (
+            <div key={key}>
+              {/* Month header row — tap to expand */}
+              <div
+                onClick={() => setExpanded(isOpen ? null : key)}
+                style={{ background: isOpen ? "rgba(45,127,249,.06)" : "var(--clr-card)", borderBottom: "1px solid var(--clr-border)", padding: "clamp(13px,3.2vw,16px) var(--gutter,18px)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: "var(--fs-lg)" }}>{monthLabel(key)}</div>
+                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 2 }}>
+                    {trades.length} trade{trades.length !== 1 ? "s" : ""} · {hidden ? "••••" : mShares.toLocaleString()} shares · {syms.length} stock{syms.length !== 1 ? "s" : ""}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-sm)" }}>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>{hidden ? "••••••" : fmtGHSPlain(mTotal)}</div>
+                  </div>
+                  <span style={{ color: "var(--clr-dim)", fontSize: "var(--fs-lg)", marginLeft: 4 }}>{isOpen ? "▲" : "▼"}</span>
+                </div>
+              </div>
+
+              {/* Expanded: symbol breakdown */}
+              {isOpen && (
+                <div style={{ background: "var(--clr-bg)", borderBottom: "1px solid var(--clr-border)" }}>
+                  {/* Per-symbol summary rows */}
+                  {syms.map(([sym, data]) => (
+                    <div key={sym}>
+                      {/* Symbol sub-header */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "clamp(10px,2.8vw,13px) var(--gutter,18px) clamp(10px,2.8vw,13px) calc(var(--gutter,18px) + 12px)", background: "rgba(45,127,249,.04)", borderBottom: "1px solid var(--clr-border)" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-sm)" }}>
+                          <div style={{ ...S.avatar, width: 30, height: 30, fontSize: "var(--fs-xs)" }}>{sym.slice(0, 4)}</div>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>{sym}</div>
+                            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>{data.trades.length} trade{data.trades.length !== 1 ? "s" : ""}</div>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontWeight: 700, fontSize: "var(--fs-base)" }}>{hidden ? "••••••" : fmtGHSPlain(data.cost)}</div>
+                          <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)" }}>{hidden ? "••••" : data.shares.toLocaleString()} shares</div>
+                        </div>
+                      </div>
+
+                      {/* Individual trades for this symbol */}
+                      {data.trades
+                        .slice()
+                        .sort((a, b) => b.iso.localeCompare(a.iso))
+                        .map((t, i) => {
+                          const tradeCost = (t.consideration ?? 0) + (t.charges ?? 0);
+                          return (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "clamp(8px,2.2vw,11px) var(--gutter,18px) clamp(8px,2.2vw,11px) calc(var(--gutter,18px) + 28px)", borderBottom: "1px solid var(--clr-border)", background: "var(--clr-card)" }}>
+                              <div>
+                                <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)" }}>{t.date}</div>
+                                <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 2 }}>
+                                  {hidden ? "•••• shares" : `${t.shares.toLocaleString()} shares`} @ {hidden ? "GHS ••••" : `GHS ${t.pricePerShare}`}
+                                  {t.charges > 0 && !hidden ? ` · fees GHS ${t.charges}` : ""}
+                                </div>
+                              </div>
+                              <div style={{ fontWeight: 600, fontSize: "var(--fs-base)", color: "var(--clr-red)" }}>
+                                {hidden ? "••••••" : `-${fmtGHSPlain(tradeCost)}`}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  ))}
+
+                  {/* Month total footer */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "clamp(10px,2.8vw,13px) var(--gutter,18px)", background: "var(--clr-card-alt)", borderTop: "2px solid var(--clr-border)" }}>
+                    <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", fontWeight: 600 }}>Month total</div>
+                    <div style={{ fontWeight: 800, fontSize: "var(--fs-md)" }}>{hidden ? "••••••" : fmtGHSPlain(mTotal)}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── PerfStockRow — top-level so hooks are stable across renders ──────────────
 function PerfStockRow({ s, refPrice, rdStr, editing, editVal, setEditing, setEditVal, saveRef }) {
   const cur    = s.currentPrice;
@@ -2010,6 +2199,7 @@ function BottomNav({ tab, setTab }) {
     { id: "tbills",      label: "T-Bills",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
     { id: "mutualfunds", label: "Funds",    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg> },
     { id: "summary",     label: "Summary",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> },
+    { id: "history",     label: "History",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="8" y2="14"/><line x1="12" y1="14" x2="12" y2="14"/><line x1="16" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="8" y2="18"/><line x1="12" y1="18" x2="12" y2="18"/></svg> },
     { id: "perf",        label: "Perf",     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg> },
     { id: "analyse",     label: "Analyse",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg> },
   ];
@@ -2960,6 +3150,13 @@ export default function App() {
     <>
       <SummaryScreen portfolio={portfolio} tbills={tbills} mfunds={mfunds}
         hidden={hidden} setHidden={setHidden} lightTheme={lightTheme} setLightTheme={setLightTheme} />
+      <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
+    </>
+  );
+
+  if (navTab === "history") return (
+    <>
+      <MonthlyScreen portfolio={portfolio} hidden={hidden} setHidden={setHidden} lightTheme={lightTheme} setLightTheme={setLightTheme} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
   );
