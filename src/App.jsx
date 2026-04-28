@@ -2687,7 +2687,7 @@ function MutualFundsScreen({ mfunds, hidden, mfSheet, setMfSheet, editingMF, set
 }
 
 // ─── Summary Screen ───────────────────────────────────────────────────────────
-function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightTheme, setLightTheme }) {
+function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightTheme, setLightTheme, lastUpdated }) {
   const stocks         = Object.values(portfolio);
   const stocksValue    = stocks.reduce((s, x) => s + (x.currentPrice !== null ? x.currentPrice * x.totalShares : x.totalCost), 0);
   const stocksInvested = stocks.reduce((s, x) => s + x.totalCost, 0);
@@ -2706,6 +2706,26 @@ function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightThem
   const totalValue     = stocksValue + tbMaturity + mfLatest;
   const totalEarnings  = totalValue - totalInvested;
   const totalEarnPct   = totalInvested ? (totalEarnings / totalInvested) * 100 : 0;
+
+  // ── Day movement (current vs previous trading day close) ──────────────────
+  // prevPrice is set from the GSE API's change field, which already accounts
+  // for weekends and public holidays — it always reflects the last trading day.
+  const dayStocks      = stocks.filter(s => s.currentPrice !== null && s.prevPrice !== null);
+  const totalDayPnl    = dayStocks.reduce((s, x) => s + (x.currentPrice - x.prevPrice) * x.totalShares, 0);
+  const prevPortVal    = dayStocks.reduce((s, x) => s + x.prevPrice * x.totalShares, 0);
+  const totalDayPct    = prevPortVal > 0 ? (totalDayPnl / prevPortVal) * 100 : 0;
+  const hasDayData     = dayStocks.length > 0;
+
+  // Determine what "previous day" label to show
+  function prevTradingDayLabel() {
+    if (!lastUpdated) return "previous trading day";
+    const d = new Date(lastUpdated);
+    // Step back to find the previous trading day (skip Sat/Sun)
+    d.setDate(d.getDate() - 1);
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+    return d.toLocaleDateString("en-GH", { weekday: "short", day: "numeric", month: "short" });
+  }
+
   const fmtPlain = v => `GHS ${Math.abs(v).toLocaleString("en-GH", { minimumFractionDigits: 2 })}`;
   const tiles = [
     { icon: "📈", label: "Stocks Value",     value: fmtPlain(stocksValue),  sub: `${stocksPnl >= 0 ? "+" : ""}GHS ${Math.abs(stocksPnl).toLocaleString("en-GH",{minimumFractionDigits:2})} P&L`, subColor: col(stocksPnl) },
@@ -2727,6 +2747,84 @@ function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightThem
           </div>
         </div>
       </div>
+
+      {/* ── Today's Movement card ── */}
+      {hasDayData && (
+        <div style={{ margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", border: `1px solid ${totalDayPnl >= 0 ? "rgba(0,200,83,.3)" : "rgba(245,34,45,.3)"}`, background: totalDayPnl >= 0 ? "rgba(0,200,83,.07)" : "rgba(245,34,45,.07)", overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ padding: "clamp(12px,3vw,16px) clamp(14px,3.5vw,18px) clamp(8px,2vw,10px)", borderBottom: "1px solid var(--clr-border)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ ...S.label, color: totalDayPnl >= 0 ? "var(--clr-green)" : "var(--clr-red)" }}>
+                  Today vs {prevTradingDayLabel()}
+                </div>
+                <div style={{ fontSize: "var(--fs-3xl)", fontWeight: 900, color: totalDayPnl >= 0 ? "var(--clr-green)" : "var(--clr-red)", letterSpacing: -1, lineHeight: 1.1, marginTop: 4 }}>
+                  {hidden ? "••••••" : `${totalDayPnl >= 0 ? "+" : ""}GHS ${Math.abs(totalDayPnl).toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}
+                </div>
+              </div>
+              <div style={{ textAlign: "right", paddingTop: 4 }}>
+                <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginBottom: 4 }}>Day return</div>
+                <div style={{ ...S.changeBadge(totalDayPct), fontSize: "var(--fs-lg)", fontWeight: 800, padding: "5px 12px" }}>
+                  <Arrow value={totalDayPct} />
+                  {hidden ? "••••" : `${totalDayPct >= 0 ? "+" : ""}${totalDayPct.toFixed(2)}%`}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 8 }}>
+              {dayStocks.length} stock{dayStocks.length !== 1 ? "s" : ""} with live prices
+              {lastUpdated ? ` · updated ${lastUpdated.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}` : ""}
+              {" · weekends & holidays excluded"}
+            </div>
+          </div>
+
+          {/* Per-stock breakdown */}
+          {dayStocks
+            .map(s => ({ s, dayPnl: (s.currentPrice - s.prevPrice) * s.totalShares, dayPct: ((s.currentPrice - s.prevPrice) / s.prevPrice) * 100 }))
+            .sort((a, b) => b.dayPnl - a.dayPnl)
+            .map(({ s, dayPnl, dayPct }) => (
+              <div key={s.symbol} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "clamp(9px,2.5vw,12px) clamp(14px,3.5vw,18px)", borderBottom: "1px solid var(--clr-border)", background: "var(--clr-card)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-sm)" }}>
+                  <div style={{ ...S.avatar, width: 30, height: 30, fontSize: "var(--fs-xs)" }}>{s.symbol.slice(0, 4)}</div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: "var(--fs-base)" }}>{s.symbol}</div>
+                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: 1 }}>
+                      {hidden ? "•••• shares" : `${s.totalShares.toLocaleString()} shares`}
+                      {" · "}{hidden ? "prev ••••" : `prev GHS ${s.prevPrice}`}
+                      {" → "}{hidden ? "••••" : `GHS ${s.currentPrice}`}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontWeight: 700, fontSize: "var(--fs-base)", color: col(dayPnl) }}>
+                    {hidden ? "••••" : `${dayPnl >= 0 ? "+" : ""}GHS ${Math.abs(dayPnl).toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}
+                  </div>
+                  <div style={{ ...S.changeBadge(dayPct), fontSize: "var(--fs-xs)", marginTop: 3, justifyContent: "flex-end" }}>
+                    <Arrow value={dayPct} />{hidden ? "••••" : `${dayPct >= 0 ? "+" : ""}${dayPct.toFixed(2)}%`}
+                  </div>
+                </div>
+              </div>
+            ))}
+
+          {/* No-data stocks note */}
+          {stocks.length > dayStocks.length && (
+            <div style={{ padding: "clamp(8px,2vw,10px) clamp(14px,3.5vw,18px)", fontSize: "var(--fs-xs)", color: "var(--clr-dim)", background: "var(--clr-bg)" }}>
+              {stocks.length - dayStocks.length} stock{stocks.length - dayStocks.length !== 1 ? "s" : ""} excluded — no live price data. Tap "Fetch Live Prices" on the Stocks tab.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* No live data prompt */}
+      {!hasDayData && stocks.length > 0 && (
+        <div style={{ margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", border: "1px solid var(--clr-border)", background: "var(--clr-card)", padding: "clamp(14px,3.5vw,18px)", textAlign: "center" }}>
+          <div style={{ fontSize: "clamp(24px,6vw,32px)", marginBottom: 8 }}>📊</div>
+          <div style={{ fontWeight: 700, fontSize: "var(--fs-md)", marginBottom: 4 }}>No day movement data yet</div>
+          <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", lineHeight: 1.6 }}>
+            Tap "Fetch Live Prices" on the Stocks tab to load today's prices and see your day profit/loss vs the previous trading day.
+          </div>
+        </div>
+      )}
+
       <div style={S.hero}>
         <div style={S.label}>Total Portfolio Value</div>
         <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${totalValue.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`}</div>
@@ -3149,6 +3247,7 @@ export default function App() {
   if (navTab === "summary") return (
     <>
       <SummaryScreen portfolio={portfolio} tbills={tbills} mfunds={mfunds}
+        lastUpdated={lastUpdated}
         hidden={hidden} setHidden={setHidden} lightTheme={lightTheme} setLightTheme={setLightTheme} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
