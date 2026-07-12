@@ -20,6 +20,14 @@ const ACCENT = "#2d7ff9";
 
 function col(v) { return v > 0 ? GREEN : v < 0 ? RED : DIM; }
 
+// ─── Supported statement sources ──────────────────────────────────────────────
+// Add a new entry here (plus a matching parser + branch in handleFile) to
+// support another broker/statement format.
+const STATEMENT_SOURCES = [
+  { id: "ic",        name: "IC Wealth",  desc: "IC Securities · GSE trade confirmations" },
+  { id: "blackstar",  name: "Blackstar",  desc: "Black Star Advisors · Client Account Statement" },
+];
+
 // ─── Theme tokens ─────────────────────────────────────────────────────────────
 // All colours live in CSS custom properties. Toggling body.light switches theme.
 const THEME_CSS = `
@@ -70,13 +78,60 @@ const THEME_CSS = `
   }
 `;
 
+// ─── Multi-portfolio registry ─────────────────────────────────────────────────
+// Each portfolio gets its own IndexedDB database, so switching portfolios is
+// just a matter of pointing the existing DB helpers at a different database
+// name — none of the CRUD logic below needs to know portfolios exist at all.
+// The very first portfolio ("default") keeps using the original database name
+// so existing users' data is picked up automatically, with no migration step.
+const PORTFOLIOS_LS_KEY = "gse-portfolios-registry";
+const ACTIVE_PORTFOLIO_LS_KEY = "gse-active-portfolio";
+const LEGACY_DB_NAME = "gse-portfolio";
+
+function loadPortfoliosRegistry() {
+  try {
+    const raw = localStorage.getItem(PORTFOLIOS_LS_KEY);
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list) && list.length) return list;
+    }
+  } catch { /* fall through to default */ }
+  const initial = [{ id: "default", name: "My Portfolio", createdAt: Date.now() }];
+  try { localStorage.setItem(PORTFOLIOS_LS_KEY, JSON.stringify(initial)); } catch {}
+  return initial;
+}
+function savePortfoliosRegistry(list) {
+  try { localStorage.setItem(PORTFOLIOS_LS_KEY, JSON.stringify(list)); } catch {}
+}
+function getActivePortfolioId() {
+  try {
+    const id = localStorage.getItem(ACTIVE_PORTFOLIO_LS_KEY);
+    if (id) return id;
+  } catch { /* fall through */ }
+  return "default";
+}
+function setActivePortfolioIdLS(id) {
+  try { localStorage.setItem(ACTIVE_PORTFOLIO_LS_KEY, id); } catch {}
+}
+function dbNameFor(portfolioId) {
+  return portfolioId === "default" ? LEGACY_DB_NAME : `gse-portfolio__${portfolioId}`;
+}
+// Module-level "current" portfolio id — read by openDB() below. Kept outside
+// React state because these DB helper functions are plain async functions,
+// not hooks, and are called from many places throughout the file.
+let ACTIVE_PORTFOLIO_ID = getActivePortfolioId();
+function setActivePortfolioDB(id) {
+  ACTIVE_PORTFOLIO_ID = id;
+  setActivePortfolioIdLS(id);
+}
+
 // ─── IndexedDB helpers ───────────────────────────────────────────────────────
-const DB_NAME = "gse-portfolio", DB_VERSION = 3, STORE = "portfolio";
+const DB_VERSION = 3, STORE = "portfolio";
 const STORE_TB = "tbills", STORE_MF = "mutualfunds", STORE_PH = "price_history";
 
 function openDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(dbNameFor(ACTIVE_PORTFOLIO_ID), DB_VERSION);
     req.onupgradeneeded = e => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains(STORE))
@@ -190,12 +245,28 @@ function today() { return new Date().toISOString().slice(0, 10); }
 // ─── Portfolio builder ───────────────────────────────────────────────────────
 function buildPortfolio(trades, wtdAvgMap = {}) {
   const map = {};
-  for (const t of trades) {
+  // Sort chronologically so sells reduce a position built up by prior buys, in order.
+  const sorted = [...trades].sort((a, b) => parseTradeDate(a.date) - parseTradeDate(b.date));
+  for (const t of sorted) {
     if (!map[t.symbol]) map[t.symbol] = { symbol: t.symbol, totalShares: 0, totalCost: 0, trades: [], currentPrice: null, prevPrice: null };
     const s = map[t.symbol];
-    s.totalShares += t.shares;
-    s.totalCost   += t.consideration + t.charges;
+    if (t.type === "sell") {
+      // Reduce the position using the average cost per share held at the time of the sale
+      // (standard moving-average cost method), rather than treating sells as negative buys.
+      const avgPerShare = s.totalShares > 0 ? s.totalCost / s.totalShares : 0;
+      const soldShares  = Math.min(t.shares, s.totalShares);
+      s.totalShares -= soldShares;
+      s.totalCost   -= avgPerShare * soldShares;
+      if (s.totalShares < 1e-6) { s.totalShares = 0; s.totalCost = 0; }
+    } else {
+      s.totalShares += t.shares;
+      s.totalCost   += t.consideration + t.charges;
+    }
     s.trades.push(t);
+  }
+  // Drop any symbol that's been fully exited (0 shares left) — nothing to show.
+  for (const sym of Object.keys(map)) {
+    if (map[sym].totalShares <= 0) delete map[sym];
   }
   for (const s of Object.values(map)) {
     if (wtdAvgMap[s.symbol] != null) {
@@ -208,6 +279,15 @@ function buildPortfolio(trades, wtdAvgMap = {}) {
     }
   }
   return map;
+}
+
+// Parses "DD/MM/YYYY" (or falls back gracefully) into a sortable timestamp.
+function parseTradeDate(d) {
+  if (!d) return 0;
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(d);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1]).getTime();
+  const t = new Date(d).getTime();
+  return isNaN(t) ? 0 : t;
 }
 
 // ─── PDF extractor ───────────────────────────────────────────────────────────
@@ -280,6 +360,75 @@ async function extractTradesFromPDF(file) {
     trades.push({ date: dates[di]?.[1] || "Unknown", shares: safeFloat(m[1]), symbol: m[2].toUpperCase(), pricePerShare: safeFloat(m[3]), consideration: safeFloat(m[4]), charges: safeFloat(m[5]) });
   }
   return { trades, wtdAvgMap };
+}
+
+// ─── Black Star Advisors statement parser ────────────────────────────────────
+// Unlike the IC Securities parser (which reconstructs positions from a trade
+// history), Black Star's "Client Account Statement" already lists current
+// holdings directly in a "PORTFOLIO HOLDINGS" section — one table per asset
+// class (Mutual Funds, Equity, ETFs, Cash), each row shaped like:
+//   Description (ID/ISIN)   Quantity   Yield   Price   Value   Currency
+// e.g. "GH.GSE/IIL (GH0000001258)   2,439   -   0.2000   682.92   GHS"
+// We read holdings straight from that section rather than the Activities log.
+async function extractBlackstarStatement(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  let fullText = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    fullText += content.items.map(x => x.str).join(" ") + "\n";
+  }
+
+  const holdingsStart = fullText.search(/PORTFOLIO\s+HOLDINGS/i);
+  if (holdingsStart === -1) {
+    throw new Error("Couldn't find a \"Portfolio Holdings\" section — make sure this is a Black Star Advisors statement.");
+  }
+  const activitiesStart = fullText.search(/\bACTIVITIES\b/i);
+  const section = activitiesStart > holdingsStart ? fullText.slice(holdingsStart, activitiesStart) : fullText.slice(holdingsStart);
+
+  // Use the statement's "To" date (report end date) as the trade date, since
+  // holdings-only statements don't give individual purchase dates.
+  const dateMatch = fullText.match(/To\s+(\d{2}\/\d{2}\/\d{4})/);
+  const asOfDate  = dateMatch ? dateMatch[1] : today();
+
+  // Row shape: Description [ (ISIN) ]  Quantity  Yield  Price  Value  Currency
+  const rowRe = /([A-Za-z][\w./]*(?:\s+[A-Za-z]+)?(?:\s*\([A-Z0-9]+\))?)\s+([\d,]+\.?\d*)\s+(-|[\d.]+)\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s+([A-Z]{3})\b/g;
+
+  const trades = [];
+  const holdingsMeta = {};
+  let m;
+  while ((m = rowRe.exec(section)) !== null) {
+    const rawDesc = m[1].trim();
+    if (/^Cash\b/i.test(rawDesc) || /^Total\b/i.test(rawDesc)) continue;
+
+    const qty      = safeFloat(m[2]);
+    const price    = safeFloat(m[4]);
+    const value    = safeFloat(m[5]);
+    const currency = m[6];
+    // Holdings under ~0.5 units round to "0" in the statement — nothing
+    // meaningful to track as a position, so skip rather than divide by zero.
+    if (!qty || qty <= 0) continue;
+
+    const nameOnly = rawDesc.replace(/\s*\([^)]*\)\s*$/, "").trim(); // strip trailing "(ISIN)"
+    const symbol = nameOnly.includes("/") ? nameOnly.split("/").pop().toUpperCase() : nameOnly.toUpperCase();
+    trades.push({
+      date: asOfDate,
+      shares: qty,
+      symbol,
+      pricePerShare: price,
+      consideration: value,
+      charges: 0,
+      type: "buy",
+    });
+    holdingsMeta[symbol] = { currentPrice: price, currency };
+  }
+
+  if (!trades.length) {
+    throw new Error("No holdings found in the Portfolio Holdings section of this PDF.");
+  }
+  return { trades, wtdAvgMap: {}, holdingsMeta };
 }
 
 // ─── Export helpers ──────────────────────────────────────────────────────────
@@ -2924,6 +3073,16 @@ export default function App() {
   const heroTouchX = useRef(null);
   const [showDCA,        setShowDCA]        = useState(false);
   const [dcaTarget,      setDcaTarget]      = useState("");
+  // Statement source (which broker/format the imported PDF comes from)
+  const [sourceSheetOpen, setSourceSheetOpen] = useState(false);
+  const [importSource,    setImportSource]    = useState("ic"); // "ic" | "blackstar"
+  // Multi-portfolio management
+  const [portfolios,          setPortfolios]          = useState(() => loadPortfoliosRegistry());
+  const [activePortfolioId,   setActivePortfolioIdSt] = useState(() => getActivePortfolioId());
+  const [portfolioSheetOpen,  setPortfolioSheetOpen]  = useState(false);
+  const [newPortfolioName,    setNewPortfolioName]    = useState("");
+  const [renamingPortfolioId, setRenamingPortfolioId] = useState(null);
+  const [renamePortfolioName, setRenamePortfolioName] = useState("");
 
   // ── Apply theme class to body ─────────────────────────────────────────────
   useEffect(() => {
@@ -2947,17 +3106,26 @@ export default function App() {
     }
   }, []);
 
-  // ── Load portfolio from IndexedDB on mount ────────────────────────────────
-  useEffect(() => {
-    dbGetAll()
-      .then(rows => {
-        const map = {};
-        for (const row of rows) map[row.symbol] = row;
-        setPortfolio(map);
-        setDbReady(true);
-      })
-      .catch(() => setDbReady(true));
+  // ── Load all portfolio-scoped data (stocks, T-Bills, mutual funds) ────────
+  // Reused both on first mount and whenever the active portfolio is switched —
+  // switching just points the DB helpers at a different IndexedDB database
+  // (see dbNameFor/ACTIVE_PORTFOLIO_ID above), then this reloads React state.
+  const loadAllPortfolioData = useCallback(async () => {
+    const [rows, tb, mf] = await Promise.all([
+      dbGetAll().catch(() => []),
+      storeGetAll(STORE_TB).catch(() => []),
+      storeGetAll(STORE_MF).catch(() => []),
+    ]);
+    const map = {};
+    for (const row of rows) map[row.symbol] = row;
+    setPortfolio(map);
+    setTbills(tb);
+    setMfunds(mf);
+    setDbReady(true);
   }, []);
+
+  // ── Load on mount ──────────────────────────────────────────────────────────
+  useEffect(() => { loadAllPortfolioData(); }, [loadAllPortfolioData]);
 
   // ── Persist every change to IndexedDB ────────────────────────────────────
   const isFirst = useRef(true);
@@ -2966,6 +3134,55 @@ export default function App() {
     if (isFirst.current) { isFirst.current = false; return; }
     Object.values(portfolio).forEach(r => dbPut(r).catch(console.error));
   }, [portfolio, dbReady]);
+
+  // ── Multi-portfolio management ─────────────────────────────────────────────
+  const switchPortfolio = useCallback(async (id) => {
+    if (id === activePortfolioId) { setPortfolioSheetOpen(false); return; }
+    isFirst.current = true; // don't immediately re-persist the freshly-loaded data
+    setDbReady(false);
+    setActivePortfolioDB(id);
+    setActivePortfolioIdSt(id);
+    // Reset transient UI/selection state — it belongs to the old portfolio
+    setSelected(null); setScreen("home"); setNavTab("stocks");
+    setPendingTrades(null); setManualOpen(false); setExportOpen(false); setConfirmClear(false);
+    await loadAllPortfolioData();
+    setPortfolioSheetOpen(false);
+  }, [activePortfolioId, loadAllPortfolioData]);
+
+  function createPortfolio() {
+    const name = newPortfolioName.trim();
+    if (!name) return;
+    const id = `p_${Date.now()}`;
+    const next = [...portfolios, { id, name, createdAt: Date.now() }];
+    setPortfolios(next);
+    savePortfoliosRegistry(next);
+    setNewPortfolioName("");
+    switchPortfolio(id);
+  }
+
+  function startRenamePortfolio(p) {
+    setRenamingPortfolioId(p.id);
+    setRenamePortfolioName(p.name);
+  }
+  function saveRenamePortfolio() {
+    const name = renamePortfolioName.trim();
+    if (!name) { setRenamingPortfolioId(null); return; }
+    const next = portfolios.map(p => p.id === renamingPortfolioId ? { ...p, name } : p);
+    setPortfolios(next);
+    savePortfoliosRegistry(next);
+    setRenamingPortfolioId(null);
+  }
+
+  async function deletePortfolio(id) {
+    if (portfolios.length <= 1) return; // always keep at least one portfolio
+    const next = portfolios.filter(p => p.id !== id);
+    setPortfolios(next);
+    savePortfoliosRegistry(next);
+    try { indexedDB.deleteDatabase(dbNameFor(id)); } catch {}
+    if (id === activePortfolioId) {
+      await switchPortfolio(next[0].id);
+    }
+  }
 
   const removeSymbol = useCallback(async sym => {
     await dbDelete(sym);
@@ -2977,12 +3194,17 @@ export default function App() {
     const file = e.target.files[0]; if (!file) return;
     setLoading(true); setError(""); setLoadMsg("Reading PDF…");
     try {
-      const { trades, wtdAvgMap } = await extractTradesFromPDF(file);
+      const isBlackstar = importSource === "blackstar";
+      const { trades, wtdAvgMap, holdingsMeta } = isBlackstar
+        ? await extractBlackstarStatement(file)
+        : await extractTradesFromPDF(file);
       if (!trades?.length) {
-        setError("No 'Bought' transactions found. Ensure the PDF is from IC Securities.");
+        setError(isBlackstar
+          ? "No holdings found. Ensure the PDF is a Black Star Advisors statement."
+          : "No 'Bought' transactions found. Ensure the PDF is from IC Securities.");
       } else {
-        setLoadMsg(`Found ${trades.length} transactions…`);
-        setPendingTrades({ trades, wtdAvgMap }); // show merge/replace choice sheet
+        setLoadMsg(isBlackstar ? `Found ${trades.length} holdings…` : `Found ${trades.length} transactions…`);
+        setPendingTrades({ trades, wtdAvgMap, holdingsMeta }); // show merge/replace choice sheet
       }
     } catch (err) { setError("Error parsing PDF: " + err.message); }
     setLoading(false); setLoadMsg(""); e.target.value = "";
@@ -2990,11 +3212,12 @@ export default function App() {
 
   // ── Merge PDF trades into existing portfolio (add on top) ─────────────────
   function commitMerge() {
-    const { trades, wtdAvgMap } = pendingTrades;
+    const { trades, wtdAvgMap, holdingsMeta } = pendingTrades;
     const built = buildPortfolio(trades, wtdAvgMap);
     setPortfolio(prev => {
       const next = { ...prev };
       for (const [sym, data] of Object.entries(built)) {
+        const meta = holdingsMeta?.[sym];
         if (next[sym]) {
           next[sym].totalShares += data.totalShares;
           next[sym].totalCost   += data.totalCost;
@@ -3007,8 +3230,17 @@ export default function App() {
             next[sym].avgCost       = next[sym].totalCost / next[sym].totalShares;
             next[sym].avgCostLocked = false;
           }
+          if (meta) {
+            next[sym].currentPrice = meta.currentPrice;
+            next[sym].currency     = meta.currency;
+          }
         } else {
-          next[sym] = { ...data, currentPrice: null, prevPrice: null };
+          next[sym] = {
+            ...data,
+            currentPrice: meta?.currentPrice ?? null,
+            prevPrice: null,
+            currency: meta?.currency,
+          };
         }
       }
       return next;
@@ -3018,16 +3250,18 @@ export default function App() {
 
   // ── Replace portfolio with PDF trades (fresh start) ───────────────────────
   async function commitReplace() {
-    const { trades, wtdAvgMap } = pendingTrades;
+    const { trades, wtdAvgMap, holdingsMeta } = pendingTrades;
     const built = buildPortfolio(trades, wtdAvgMap);
     // Preserve current/prev prices for symbols that already exist
     setPortfolio(prev => {
       const next = {};
       for (const [sym, data] of Object.entries(built)) {
+        const meta = holdingsMeta?.[sym];
         next[sym] = {
           ...data,
-          currentPrice: prev[sym]?.currentPrice ?? null,
+          currentPrice: prev[sym]?.currentPrice ?? meta?.currentPrice ?? null,
           prevPrice:    prev[sym]?.prevPrice    ?? null,
+          currency:     meta?.currency,
         };
       }
       return next;
@@ -3036,7 +3270,8 @@ export default function App() {
     await dbClear();
     const built2 = buildPortfolio(trades, wtdAvgMap);
     for (const [sym, data] of Object.entries(built2)) {
-      await dbPut({ ...data, currentPrice: null, prevPrice: null });
+      const meta = holdingsMeta?.[sym];
+      await dbPut({ ...data, currentPrice: meta?.currentPrice ?? null, prevPrice: null, currency: meta?.currency });
     }
     setPendingTrades(null);
   }
@@ -3128,16 +3363,6 @@ export default function App() {
   async function clearAll() {
     await dbClear(); setPortfolio({}); setConfirmClear(false); setExportOpen(false);
   }
-
-  // ── Load T-Bills from DB ──────────────────────────────────────────────────
-  useEffect(() => {
-    storeGetAll(STORE_TB).then(rows => setTbills(rows)).catch(() => {});
-  }, []);
-
-  // ── Load Mutual Funds from DB ─────────────────────────────────────────────
-  useEffect(() => {
-    storeGetAll(STORE_MF).then(rows => setMfunds(rows)).catch(() => {});
-  }, []);
 
   // ── T-Bill CRUD ───────────────────────────────────────────────────────────
   function saveTbill() {
@@ -3653,9 +3878,12 @@ export default function App() {
         {/* Header */}
         <div style={S.header}>
           <div style={{ ...S.row, alignItems: "flex-start" }}>
-            <div>
+            <div onClick={() => setPortfolioSheetOpen(true)} style={{ cursor: "pointer" }}>
               <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 3, textTransform: "uppercase" }}>IC Securities · GSE</div>
-              <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>My Portfolio</div>
+              <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                {portfolios.find(p => p.id === activePortfolioId)?.name || "My Portfolio"}
+                <span style={{ fontSize: "var(--fs-md)", color: "var(--clr-dim)" }}>▾</span>
+              </div>
             </div>
             <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
               {dbReady && <div style={S.dbTag}>💾 Saved</div>}
@@ -3750,7 +3978,7 @@ export default function App() {
           <input ref={importRef}       type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
           <input ref={backupImportRef} type="file" accept=".txt"  style={{ display: "none" }} onChange={handleBackupImport} />
 
-          <button style={S.ghostBtn} onClick={() => fileRef.current.click()} disabled={loading}>
+          <button style={S.ghostBtn} onClick={() => setSourceSheetOpen(true)} disabled={loading}>
             {loading ? <><Spinner />{loadMsg}</> : "⬆ Import PDF Statement"}
           </button>
           {error && <div style={{ color: "var(--clr-red)", fontSize: "var(--fs-sm)", marginTop: "var(--gap-sm)" }}>{error}</div>}
@@ -3847,12 +4075,83 @@ export default function App() {
       })}
       </div>{/* end holdings-list */}
 
+      {/* ── Statement source picker ── */}
+      {sourceSheetOpen && (
+        <div className="bottom-sheet">
+          <div className="sheet-title">Which statement is this?</div>
+          <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)", marginBottom: "var(--gap-md)", lineHeight: 1.6 }}>
+            Pick the source so the PDF gets parsed correctly.
+          </div>
+          {STATEMENT_SOURCES.map(src => (
+            <button key={src.id} style={{ ...S.btn, marginTop: 0, marginBottom: "var(--gap-sm)", textAlign: "left", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, padding: "clamp(12px,3vw,16px) clamp(14px,3.5vw,18px)" }}
+              onClick={() => { setImportSource(src.id); setSourceSheetOpen(false); fileRef.current.click(); }}>
+              <span style={{ fontSize: "var(--fs-md)", fontWeight: 700 }}>{src.name}</span>
+              <span style={{ fontSize: "var(--fs-sm)", fontWeight: 400, color: "rgba(255,255,255,.7)" }}>{src.desc}</span>
+            </button>
+          ))}
+          <button style={{ ...S.ghostBtn, marginTop: 0 }} onClick={() => setSourceSheetOpen(false)}>Cancel</button>
+        </div>
+      )}
+
+      {/* ── Portfolio switcher / manager ── */}
+      {portfolioSheetOpen && (
+        <div className="bottom-sheet">
+          <div className="sheet-title">Your Portfolios</div>
+          <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)", marginBottom: "var(--gap-md)", lineHeight: 1.6 }}>
+            Each portfolio keeps its own holdings, T-Bills, and mutual funds — completely separate from the others.
+          </div>
+
+          {portfolios.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "var(--gap-sm)" }}>
+              {renamingPortfolioId === p.id ? (
+                <>
+                  <input style={{ ...S.input, margin: 0, flex: 1 }} value={renamePortfolioName}
+                    onChange={e => setRenamePortfolioName(e.target.value)} autoFocus
+                    onKeyDown={e => e.key === "Enter" && saveRenamePortfolio()} />
+                  <button style={{ ...S.ghostBtn, margin: 0, padding: "8px 12px" }} onClick={saveRenamePortfolio}>Save</button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => switchPortfolio(p.id)}
+                    style={{
+                      ...S.btn, marginTop: 0, flex: 1, textAlign: "left",
+                      background: p.id === activePortfolioId ? "var(--clr-accent)" : "var(--clr-card-alt)",
+                      color: p.id === activePortfolioId ? "#fff" : "var(--clr-text)",
+                      border: p.id === activePortfolioId ? "none" : "1px solid var(--clr-border)",
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                    }}>
+                    <span style={{ fontWeight: 700 }}>{p.name}</span>
+                    {p.id === activePortfolioId && <span style={{ fontSize: "var(--fs-xs)" }}>● active</span>}
+                  </button>
+                  <button title="Rename" onClick={() => startRenamePortfolio(p)}
+                    style={{ ...S.ghostBtn, margin: 0, padding: "8px 10px", flex: "0 0 auto" }}>✎</button>
+                  {portfolios.length > 1 && (
+                    <button title="Delete" onClick={() => { if (confirm(`Delete "${p.name}"? This removes all of its holdings, T-Bills, and mutual funds.`)) deletePortfolio(p.id); }}
+                      style={{ ...S.ghostBtn, margin: 0, padding: "8px 10px", flex: "0 0 auto", color: "var(--clr-red)" }}>🗑</button>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+
+          <div style={{ display: "flex", gap: 8, marginTop: "var(--gap-md)" }}>
+            <input style={{ ...S.input, margin: 0, flex: 1 }} placeholder="New portfolio name"
+              value={newPortfolioName} onChange={e => setNewPortfolioName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && createPortfolio()} />
+            <button style={{ ...S.btn, marginTop: 0, flex: "0 0 auto" }} onClick={createPortfolio} disabled={!newPortfolioName.trim()}>+ Create</button>
+          </div>
+
+          <button style={{ ...S.ghostBtn, marginTop: "var(--gap-md)" }} onClick={() => { setPortfolioSheetOpen(false); setRenamingPortfolioId(null); }}>Close</button>
+        </div>
+      )}
+
       {/* ── PDF import mode choice sheet ── */}
       {pendingTrades && (
         <div className="bottom-sheet">
           <div className="sheet-title">Statement Imported</div>
           <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)", marginBottom: "var(--gap-md)", lineHeight: 1.6 }}>
-            Found <strong style={{ color: "var(--clr-text)" }}>{pendingTrades.trades.length} transaction{pendingTrades.trades.length !== 1 ? "s" : ""}</strong> in this statement.
+            Found <strong style={{ color: "var(--clr-text)" }}>{pendingTrades.trades.length} {importSource === "blackstar" ? "holding" : "transaction"}{pendingTrades.trades.length !== 1 ? "s" : ""}</strong> in this statement.
             How would you like to apply them?
           </div>
 
