@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const result = await fetchFromGse(`/live/${encodeURIComponent(symbol.trim().toUpperCase())}`);
+  const result = await fetchFromGse(`/equities/${encodeURIComponent(symbol.trim().toUpperCase())}`);
 
   if (!result.ok) {
     if (result.status === 404) {
