@@ -927,8 +927,11 @@ function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, set
     if (!symbol.trim()) return;
     setFetchingData(true); setFetchMsg(""); setAutoFilled(false);
     try {
-      const res = await fetch(`https://dev.kwayisi.org/apis/gse/live/${symbol.trim().toUpperCase()}`);
-      if (!res.ok) throw new Error(res.status === 404 ? `Symbol "${symbol}" not found on GSE.` : `API error ${res.status}`);
+      const res = await fetch(`/api/gse-live/${symbol.trim().toUpperCase()}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || (res.status === 404 ? `Symbol "${symbol}" not found on GSE.` : `API error ${res.status}`));
+      }
       const d = await res.json();
       // d = { name, price, change, volume }
       const price    = d.price;
@@ -3066,8 +3069,11 @@ export default function App() {
   async function fetchLivePrices() {
     setFetchingPrices(true); setFetchError("");
     try {
-      const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      const res = await fetch("/api/gse-live");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || `API error: ${res.status}`);
+      }
       const data = await res.json();
       // Store full snapshot (sorted by % change desc) for market prices page
       const snapshot = [...data].sort((a, b) => b.change - a.change);
