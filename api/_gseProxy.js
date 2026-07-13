@@ -16,7 +16,7 @@
 //    doesn't mean a broken button
 
 const UPSTREAM_BASE = "https://dev.kwayisi.org/apis/gse";
-const TIMEOUT_MS = 5000;
+const TIMEOUT_MS = 4000;
 const MAX_ATTEMPTS = 2; // 1 retry on network/timeout failure
 
 async function fetchWithTimeout(url, timeoutMs) {
