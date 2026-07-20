@@ -3313,6 +3313,7 @@ export default function App() {
     e.target.value = ""; setExportOpen(false);
   }
   async function fetchLivePrices() {
+	  console.log('fetching prices...');
     setFetchingPrices(true); setFetchError("");
     try {
       const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
