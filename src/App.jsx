@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { loadCachedSnapshot, saveCachedSnapshot, findCachedPrice } from "./lib/priceCache.js";
 
 // pdfjs is bundled locally in src/lib/ — no npm dependency, works fully offline.
 // The worker is loaded as a raw string and turned into a Blob URL so Safari
@@ -1046,7 +1047,7 @@ function EyeOffIcon() {
 }
 
 // ─── Stock Analysis Screen ────────────────────────────────────────────────────
-function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden }) {
+function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden, liveSnapshot }) {
 
   // ── Input state ───────────────────────────────────────────────────────────
   const [symbol,        setSymbol]        = useState("");
@@ -1071,34 +1072,39 @@ function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, set
   const [fetchMsg,      setFetchMsg]      = useState("");   // status message after fetch
   const [autoFilled,    setAutoFilled]    = useState(false); // true when fields came from API
 
-  // ── Fetch live data from kwayisi API for a given symbol ───────────────────
-  async function fetchStockData() {
+  // ── Look up the symbol in the already-fetched live snapshot ───────────────
+  // No network call happens here on purpose: the GSE-API is free and
+  // aggressively rate-limited, so the ONLY place the app is allowed to hit
+  // it is the "Fetch Live Prices" button on the main screen. This screen
+  // just reads whatever that button last cached.
+  function fetchStockData() {
     if (!symbol.trim()) return;
-    setFetchingData(true); setFetchMsg(""); setAutoFilled(false);
-    try {
-      const res = await fetch(`/api/gse-live/${symbol.trim().toUpperCase()}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || (res.status === 404 ? `Symbol "${symbol}" not found on GSE.` : `API error ${res.status}`));
-      }
-      const d = await res.json();
-      // d = { name, price, change, volume }
-      const price    = d.price;
-      const chg      = d.change ?? 0;
-      const prevCalc = chg !== 0 ? parseFloat((price / (1 + chg / 100)).toFixed(4)) : price;
-      const vol      = d.volume ?? 0;
+    setFetchMsg(""); setAutoFilled(false);
 
-      setCurrentPrice(String(price));
-      setPrevClose(String(prevCalc));
-      setDailyVolume(String(vol));
-      // Prev close also doubles as open if open not known
-      if (!openPrice) setOpenPrice(String(prevCalc));
-      setAutoFilled(true);
-      setFetchMsg(`✓ Fetched ${d.name}: GHS ${price}  ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%  Vol: ${vol.toLocaleString()}`);
-    } catch (err) {
-      setFetchMsg(`⚠ ${err.message}`);
+    if (!liveSnapshot) {
+      setFetchMsg("⚠ No live prices cached yet. Go to the Stocks screen and tap \"Fetch Live Prices\" first.");
+      return;
     }
-    setFetchingData(false);
+
+    const d = findCachedPrice(liveSnapshot, symbol);
+    if (!d) {
+      setFetchMsg(`⚠ "${symbol.trim().toUpperCase()}" wasn't in the last fetched snapshot (updated ${liveSnapshot.fetchedAt.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}). Try "Fetch Live Prices" again if this looks stale.`);
+      return;
+    }
+
+    // d = { name, price, change, volume }
+    const price    = d.price;
+    const chg      = d.change ?? 0;
+    const prevCalc = chg !== 0 ? parseFloat((price / (1 + chg / 100)).toFixed(4)) : price;
+    const vol      = d.volume ?? 0;
+
+    setCurrentPrice(String(price));
+    setPrevClose(String(prevCalc));
+    setDailyVolume(String(vol));
+    // Prev close also doubles as open if open not known
+    if (!openPrice) setOpenPrice(String(prevCalc));
+    setAutoFilled(true);
+    setFetchMsg(`✓ From cached snapshot (${liveSnapshot.fetchedAt.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}) — ${d.name}: GHS ${price}  ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%  Vol: ${vol.toLocaleString()}`);
   }
 
   // ── Parse inputs ──────────────────────────────────────────────────────────
@@ -3048,11 +3054,16 @@ export default function App() {
   const [manForm,        setManForm]        = useState({ symbol: "", shares: "", price: "", charges: "", date: "" });
   const [fetchingPrices, setFetchingPrices] = useState(false);
   const [fetchError,     setFetchError]     = useState("");
-  const [lastUpdated,    setLastUpdated]    = useState(null);
+  // liveSnapshot/lastUpdated seed from the persisted cache (if any) rather
+  // than null — this is the ONE place the GSE-API is ever hit, and every
+  // other screen (e.g. Stock Analysis) reads from this same cached snapshot
+  // instead of making its own request, so a page reload doesn't tempt
+  // anything into re-fetching.
+  const [lastUpdated,    setLastUpdated]    = useState(() => loadCachedSnapshot()?.fetchedAt ?? null);
   const [exportOpen,     setExportOpen]     = useState(false);
   const [confirmClear,   setConfirmClear]   = useState(false);
   const [hidden,         setHidden]         = useState(true);
-  const [liveSnapshot,   setLiveSnapshot]   = useState(null);
+  const [liveSnapshot,   setLiveSnapshot]   = useState(() => loadCachedSnapshot());
   const [showMarket,     setShowMarket]     = useState(false);
   const [lightTheme,     setLightTheme]     = useState(false);
   const [navTab,         setNavTab]         = useState("stocks"); // stocks | tbills | mutualfunds | summary
@@ -3312,7 +3323,9 @@ export default function App() {
       const data = await res.json();
       // Store full snapshot (sorted by % change desc) for market prices page
       const snapshot = [...data].sort((a, b) => b.change - a.change);
-      setLiveSnapshot({ items: snapshot, fetchedAt: new Date() });
+      const snapshotObj = { items: snapshot, fetchedAt: new Date() };
+      setLiveSnapshot(snapshotObj);
+      saveCachedSnapshot(snapshotObj); // persist so other screens/reloads reuse it instead of re-fetching
       // ── Archive today's prices ──────────────────────────────────────────
       const dateStr = today();
       phSaveSnapshot(dateStr, data).catch(console.error);
@@ -3500,7 +3513,7 @@ export default function App() {
 
   if (navTab === "analyse") return (
     <>
-      <StockAnalysisScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} />
+      <StockAnalysisScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} liveSnapshot={liveSnapshot} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
   );

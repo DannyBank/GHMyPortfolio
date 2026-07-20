@@ -1,10 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { gseApiDevMiddleware } from './vite-plugins/gse-api-dev-middleware.js'
 
 export default defineConfig({
   plugins: [
     react(),
+    gseApiDevMiddleware(),
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
