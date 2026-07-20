@@ -3316,6 +3316,7 @@ export default function App() {
     setFetchingPrices(true); setFetchError("");
     try {
       const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
+	  console.log('data retrieved', res);
       if (!res.ok) {
         const body = await res.json().catch((error) => console.log('error', error));
         if (body?.debug) console.error("[fetchLivePrices] upstream failure details:", body.debug);
