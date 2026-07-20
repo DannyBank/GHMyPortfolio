@@ -3318,6 +3318,7 @@ export default function App() {
       const res = await fetch("/api/gse-live");
       if (!res.ok) {
         const body = await res.json().catch(() => null);
+        if (body?.debug) console.error("[fetchLivePrices] upstream failure details:", body.debug);
         throw new Error(body?.message || `API error: ${res.status}`);
       }
       const data = await res.json();
