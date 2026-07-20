@@ -33,7 +33,11 @@ async function fetchWithTimeout(url, timeoutMs) {
         "User-Agent": "Mozilla/5.0 (compatible; GHMyPortfolio/1.0; +https://vercel.com)",
       },
     });
-  } finally {
+  } 
+  catch (error){
+	console.log('error', error);
+  }
+  finally {
     clearTimeout(timer);
   }
 }
