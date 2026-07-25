@@ -126,8 +126,8 @@ function setActivePortfolioDB(id) {
 }
 
 // ─── IndexedDB helpers ───────────────────────────────────────────────────────
-const DB_VERSION = 3, STORE = "portfolio";
-const STORE_TB = "tbills", STORE_MF = "mutualfunds", STORE_PH = "price_history";
+const DB_VERSION = 4, STORE = "portfolio";
+const STORE_TB = "tbills", STORE_MF = "mutualfunds", STORE_PH = "price_history", STORE_GOALS = "goals";
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -145,6 +145,12 @@ function openDB() {
         const ph = db.createObjectStore(STORE_PH, { keyPath: "id" });
         ph.createIndex("by_date",   "date",   { unique: false });
         ph.createIndex("by_symbol", "symbol", { unique: false });
+      }
+      // goals: plans/notes attached to a stock symbol (symbol needn't be a
+      // current holding — you can plan to buy something you don't own yet)
+      if (!db.objectStoreNames.contains(STORE_GOALS)) {
+        const g = db.createObjectStore(STORE_GOALS, { keyPath: "id" });
+        g.createIndex("by_symbol", "symbol", { unique: false });
       }
     };
     req.onsuccess = e => resolve(e.target.result);
@@ -2523,25 +2529,75 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
 }
 
 // ─── Bottom Navigation ────────────────────────────────────────────────────────
+// Screens grouped under the "More" tab — kept out of the main bottom nav to
+// avoid overcrowding it, but still reachable in one tap via the hub screen.
+const MORE_GROUP = ["history", "perf", "analyse", "goals"];
+
 function BottomNav({ tab, setTab }) {
   const items = [
     { id: "stocks",      label: "Stocks",   icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> },
     { id: "tbills",      label: "T-Bills",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
     { id: "mutualfunds", label: "Funds",    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg> },
     { id: "summary",     label: "Summary",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> },
-    { id: "history",     label: "History",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="8" y2="14"/><line x1="12" y1="14" x2="12" y2="14"/><line x1="16" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="8" y2="18"/><line x1="12" y1="18" x2="12" y2="18"/></svg> },
-    { id: "perf",        label: "Perf",     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg> },
-    { id: "analyse",     label: "Analyse",  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg> },
+    { id: "more",        label: "More",     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg> },
   ];
+  // Anything in MORE_GROUP should light up the "More" tab, since that's how
+  // you get there — the individual screens aren't in the bar themselves.
+  const activeId = MORE_GROUP.includes(tab) ? "more" : tab;
   return (
     <nav className="bottom-nav">
       {items.map(it => (
-        <button key={it.id} className={`nav-item${tab === it.id ? " active" : ""}`} onClick={() => setTab(it.id)}>
+        <button key={it.id} className={`nav-item${activeId === it.id ? " active" : ""}`} onClick={() => setTab(it.id)}>
           {it.icon}
           {it.label}
         </button>
       ))}
     </nav>
+  );
+}
+
+// ─── "More" hub screen — houses the less-frequently-used destinations ────────
+function MoreScreen({ setNavTab, lightTheme, setLightTheme, goals }) {
+  const pendingGoals = goals.filter(g => !g.done).length;
+  const destinations = [
+    { id: "history", label: "History",     sub: "Monthly trading activity & AI reports",
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
+    { id: "perf",    label: "Performance",  sub: "Track gains against a reference date",
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg> },
+    { id: "analyse", label: "Analyse",      sub: "Compare and dig into individual stocks",
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> },
+    { id: "goals",   label: "Plans & Goals",sub: pendingGoals ? `${pendingGoals} pending plan${pendingGoals !== 1 ? "s" : ""}` : "Notes and buy/sell plans per stock",
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 15 8.5 22 9.3 17 14.1 18.2 21 12 17.6 5.8 21 7 14.1 2 9.3 9 8.5z"/></svg> },
+  ];
+  return (
+    <div className="page-root" style={S.root}>
+      <div style={S.header}>
+        <div style={{ ...S.row, alignItems: "flex-start" }}>
+          <div>
+            <div style={S.label}>IC Securities</div>
+            <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>More</div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
+            <button className="theme-btn" onClick={() => setLightTheme(t => !t)}>{lightTheme ? "🌙" : "☀️"}</button>
+          </div>
+        </div>
+      </div>
+      <div className="holdings-list" style={{ marginTop: "var(--gap-sm)" }}>
+        {destinations.map(d => (
+          <button key={d.id} onClick={() => setNavTab(d.id)}
+            style={{ width: "100%", textAlign: "left", background: "var(--clr-card)", border: "1px solid var(--clr-border)", borderRadius: "var(--radius-card)", padding: "clamp(14px,3.5vw,18px)", marginBottom: "var(--gap-sm)", display: "flex", alignItems: "center", gap: "var(--gap-md)", cursor: "pointer", fontFamily: "'Brighter Sans', sans-serif" }}>
+            <div style={{ width: 42, height: 42, borderRadius: 12, background: "rgba(45,127,249,.12)", color: "var(--clr-accent)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span style={{ width: 22, height: 22 }}>{d.icon}</span>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: "var(--fs-md)", color: "var(--clr-text)" }}>{d.label}</div>
+              <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: 2 }}>{d.sub}</div>
+            </div>
+            <div style={{ color: "var(--clr-dim)", fontSize: "var(--fs-lg)" }}>›</div>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -3016,6 +3072,133 @@ function MutualFundsScreen({ mfunds, hidden, mfSheet, setMfSheet, editingMF, set
   );
 }
 
+// ─── Goals / Plans Screen ──────────────────────────────────────────────────────
+// Free-form plans/notes attached to a stock symbol — e.g. "buy IIL in July".
+// The symbol doesn't need to be a current holding, since plans are often
+// about stocks you don't own yet.
+function GoalsScreen({ portfolio, goals, lightTheme, setLightTheme,
+  goalSheet, setGoalSheet, editingGoal, goalForm, setGoalForm,
+  saveGoal, deleteGoal, toggleGoalDone, openEditGoal, openNewGoal }) {
+
+  const knownSymbols = [...new Set(Object.keys(portfolio))].sort();
+
+  const pending = goals.filter(g => !g.done)
+    .sort((a, b) => (a.targetDate || "9999").localeCompare(b.targetDate || "9999"));
+  const done = goals.filter(g => g.done)
+    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+
+  function fmtDate(d) {
+    if (!d) return null;
+    const dt = new Date(d + "T00:00:00");
+    if (isNaN(dt.getTime())) return d;
+    return dt.toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" });
+  }
+  function isOverdue(g) {
+    if (!g.targetDate || g.done) return false;
+    return new Date(g.targetDate + "T23:59:59") < new Date();
+  }
+
+  function GoalCard({ g }) {
+    const overdue = isOverdue(g);
+    return (
+      <div className="inv-card" style={{ opacity: g.done ? 0.6 : 1 }}>
+        <div className="inv-row" style={{ marginBottom: "var(--gap-sm)", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "flex-start" }}>
+            <button onClick={() => toggleGoalDone(g.id)} title={g.done ? "Mark as pending" : "Mark as done"}
+              style={{ width: 24, height: 24, borderRadius: 7, border: `2px solid ${g.done ? "var(--clr-green)" : "var(--clr-border)"}`, background: g.done ? "var(--clr-green)" : "none", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, marginTop: 2 }}>
+              {g.done ? "✓" : ""}
+            </button>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ ...S.avatar, width: 32, height: 32, fontSize: "var(--fs-xs)" }}>{g.symbol.slice(0, 4)}</span>
+                <span className="inv-card-title" style={{ textDecoration: g.done ? "line-through" : "none" }}>{g.symbol}</span>
+              </div>
+              <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-text)", marginTop: 6, lineHeight: 1.55, textDecoration: g.done ? "line-through" : "none" }}>{g.text}</div>
+              {g.targetDate && (
+                <div style={{ fontSize: "var(--fs-xs)", color: overdue ? "var(--clr-red)" : "var(--clr-dim)", marginTop: 5, fontWeight: overdue ? 700 : 400 }}>
+                  {overdue ? "Overdue · " : "Target · "}{fmtDate(g.targetDate)}
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", flexShrink: 0 }}>
+            <button className="update-price-btn" style={{ fontSize: "var(--fs-xs)", padding: "5px 10px" }} onClick={() => openEditGoal(g)}>Edit</button>
+            <button className="remove-btn" style={{ fontSize: "var(--fs-xs)", padding: "5px 10px" }} onClick={() => deleteGoal(g.id)}>Remove</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-root" style={S.root}>
+      <div style={S.header}>
+        <div style={{ ...S.row, alignItems: "flex-start" }}>
+          <div>
+            <div style={S.label}>IC Securities</div>
+            <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2 }}>Plans &amp; Goals</div>
+          </div>
+          <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
+            <button className="theme-btn" onClick={() => setLightTheme(t => !t)}>{lightTheme ? "🌙" : "☀️"}</button>
+          </div>
+        </div>
+      </div>
+
+      {goals.length === 0 && (
+        <div style={{ textAlign: "center", color: "var(--clr-dim)", marginTop: "clamp(40px,10vw,72px)", fontSize: "var(--fs-md)", lineHeight: 1.8, padding: "0 var(--gutter,18px)" }}>
+          No plans yet.<br/>e.g. "In the coming month of July, buy IIL stock"<br/>Tap <strong style={{ color: "var(--clr-accent)" }}>+</strong> to add one.
+        </div>
+      )}
+
+      {pending.length > 0 && <div className="section-label">Pending · {pending.length}</div>}
+      {pending.length > 0 && (
+        <div className="holdings-list">
+          {pending.map(g => <GoalCard key={g.id} g={g} />)}
+        </div>
+      )}
+
+      {done.length > 0 && <div className="section-label">Completed · {done.length}</div>}
+      {done.length > 0 && (
+        <div className="holdings-list">
+          {done.map(g => <GoalCard key={g.id} g={g} />)}
+        </div>
+      )}
+
+      {goalSheet && (
+        <div className="bottom-sheet">
+          <div className="sheet-title">{editingGoal ? "Edit Plan" : "Add a Plan"}</div>
+
+          <div style={S.label}>Stock Symbol</div>
+          <input style={S.input} type="text" placeholder="e.g. IIL" value={goalForm.symbol}
+            list="goal-symbol-suggestions"
+            onChange={e => setGoalForm(f => ({ ...f, symbol: e.target.value.toUpperCase() }))} />
+          <datalist id="goal-symbol-suggestions">
+            {knownSymbols.map(sym => <option key={sym} value={sym} />)}
+          </datalist>
+
+          <div style={S.label}>Plan / Goal</div>
+          <textarea style={{ ...S.input, minHeight: 90, resize: "vertical", fontFamily: "'Brighter Sans', sans-serif" }}
+            placeholder='e.g. "In the coming month of July, buy IIL stock"'
+            value={goalForm.text}
+            onChange={e => setGoalForm(f => ({ ...f, text: e.target.value }))} />
+
+          <div style={S.label}>Target Date (optional)</div>
+          <input style={S.input} type="date" value={goalForm.targetDate}
+            onChange={e => setGoalForm(f => ({ ...f, targetDate: e.target.value }))} />
+
+          <div className="btn-pair" style={{ marginTop: "var(--gap-sm)" }}>
+            <button style={{ ...S.btn, background: "var(--clr-card)", marginTop: 0 }}
+              onClick={() => { setGoalSheet(false); setGoalForm({ symbol: "", text: "", targetDate: "" }); }}>Cancel</button>
+            <button style={{ ...S.btn, marginTop: 0 }} onClick={saveGoal} disabled={!goalForm.symbol.trim() || !goalForm.text.trim()}>Save</button>
+          </div>
+        </div>
+      )}
+
+      <button className="fab-btn" onClick={() => openNewGoal()}>+</button>
+    </div>
+  );
+}
+
 // ─── Summary Screen ───────────────────────────────────────────────────────────
 function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightTheme, setLightTheme, lastUpdated, activePortfolioId }) {
   const [aiSummary,      setAiSummary]      = useState(null);
@@ -3336,6 +3519,11 @@ export default function App() {
   const [mfForm,         setMfForm]         = useState({ name: "", principal: "" });
   const [mfEntryForm,    setMfEntryForm]    = useState({ date: "", interest: "", maturityAmount: "" });
   const [showMFPct,      setShowMFPct]      = useState({});
+  // Goals / Plans (per-stock notes like "buy IIL in July")
+  const [goals,          setGoals]          = useState([]);
+  const [goalSheet,      setGoalSheet]      = useState(false);
+  const [editingGoal,    setEditingGoal]    = useState(null); // null = add, obj = edit
+  const [goalForm,       setGoalForm]       = useState({ symbol: "", text: "", targetDate: "" });
   const [heroCard,       setHeroCard]       = useState(0); // 0 = live totals, 1 = statement view
   const heroTouchX = useRef(null);
   const [showDCA,        setShowDCA]        = useState(false);
@@ -3378,16 +3566,18 @@ export default function App() {
   // switching just points the DB helpers at a different IndexedDB database
   // (see dbNameFor/ACTIVE_PORTFOLIO_ID above), then this reloads React state.
   const loadAllPortfolioData = useCallback(async () => {
-    const [rows, tb, mf] = await Promise.all([
+    const [rows, tb, mf, gl] = await Promise.all([
       dbGetAll().catch(() => []),
       storeGetAll(STORE_TB).catch(() => []),
       storeGetAll(STORE_MF).catch(() => []),
+      storeGetAll(STORE_GOALS).catch(() => []),
     ]);
     const map = {};
     for (const row of rows) map[row.symbol] = row;
     setPortfolio(map);
     setTbills(tb);
     setMfunds(mf);
+    setGoals(gl);
     setDbReady(true);
   }, []);
 
@@ -3412,6 +3602,7 @@ export default function App() {
     // Reset transient UI/selection state — it belongs to the old portfolio
     setSelected(null); setScreen("home"); setNavTab("stocks");
     setPendingTrades(null); setManualOpen(false); setExportOpen(false); setConfirmClear(false);
+    setGoalSheet(false); setEditingGoal(null);
     await loadAllPortfolioData();
     setPortfolioSheetOpen(false);
   }, [activePortfolioId, loadAllPortfolioData]);
@@ -3571,9 +3762,9 @@ export default function App() {
   async function fetchLivePrices() {
     setFetchingPrices(true); setFetchError("");
     try {
-      const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
+      const res = await fetch("/api/gse-live");
       if (!res.ok) {
-        const body = await res.json().catch((error) => console.log('error', error));
+        const body = await res.json().catch(() => null);
         throw new Error(body?.message || `API error: ${res.status}`);
       }
       const data = await res.json();
@@ -3656,6 +3847,50 @@ export default function App() {
   function deleteTbill(id) {
     storeDelete(STORE_TB, id).catch(console.error);
     setTbills(prev => prev.filter(x => x.id !== id));
+  }
+
+  // ── Goal / Plan CRUD ──────────────────────────────────────────────────────
+  function saveGoal() {
+    const symbol = goalForm.symbol.trim().toUpperCase();
+    const text   = goalForm.text.trim();
+    if (!symbol || !text) return;
+    const now = new Date().toISOString();
+    const id  = editingGoal?.id ?? `goal_${Date.now()}`;
+    const record = {
+      id, symbol, text,
+      targetDate: goalForm.targetDate || null,
+      done:       editingGoal?.done ?? false,
+      createdAt:  editingGoal?.createdAt ?? now,
+      updatedAt:  now,
+    };
+    storePut(STORE_GOALS, record).catch(console.error);
+    setGoals(prev => editingGoal
+      ? prev.map(g => g.id === id ? record : g)
+      : [...prev, record]);
+    setGoalForm({ symbol: "", text: "", targetDate: "" });
+    setGoalSheet(false); setEditingGoal(null);
+  }
+  function deleteGoal(id) {
+    storeDelete(STORE_GOALS, id).catch(console.error);
+    setGoals(prev => prev.filter(g => g.id !== id));
+  }
+  function toggleGoalDone(id) {
+    setGoals(prev => {
+      const next = prev.map(g => g.id === id ? { ...g, done: !g.done, updatedAt: new Date().toISOString() } : g);
+      const updated = next.find(g => g.id === id);
+      if (updated) storePut(STORE_GOALS, updated).catch(console.error);
+      return next;
+    });
+  }
+  function openEditGoal(g) {
+    setEditingGoal(g);
+    setGoalForm({ symbol: g.symbol, text: g.text, targetDate: g.targetDate || "" });
+    setGoalSheet(true);
+  }
+  function openNewGoal(symbol = "") {
+    setEditingGoal(null);
+    setGoalForm({ symbol, text: "", targetDate: "" });
+    setGoalSheet(true);
   }
 
   // ── Mutual Fund CRUD ──────────────────────────────────────────────────────
@@ -3768,6 +4003,23 @@ export default function App() {
   if (navTab === "analyse") return (
     <>
       <StockAnalysisScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} />
+      <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
+    </>
+  );
+
+  if (navTab === "goals") return (
+    <>
+      <GoalsScreen portfolio={portfolio} goals={goals} lightTheme={lightTheme} setLightTheme={setLightTheme}
+        goalSheet={goalSheet} setGoalSheet={setGoalSheet} editingGoal={editingGoal}
+        goalForm={goalForm} setGoalForm={setGoalForm} saveGoal={saveGoal} deleteGoal={deleteGoal}
+        toggleGoalDone={toggleGoalDone} openEditGoal={openEditGoal} openNewGoal={openNewGoal} />
+      <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
+    </>
+  );
+
+  if (navTab === "more") return (
+    <>
+      <MoreScreen setNavTab={setNavTab} lightTheme={lightTheme} setLightTheme={setLightTheme} goals={goals} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
   );
