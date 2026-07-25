@@ -3571,9 +3571,9 @@ export default function App() {
   async function fetchLivePrices() {
     setFetchingPrices(true); setFetchError("");
     try {
-      const res = await fetch("/api/gse-live");
+      const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
       if (!res.ok) {
-        const body = await res.json().catch(() => null);
+        const body = await res.json().catch((error) => console.log('error', error));
         throw new Error(body?.message || `API error: ${res.status}`);
       }
       const data = await res.json();
