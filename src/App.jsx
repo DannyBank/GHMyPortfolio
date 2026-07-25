@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { loadCachedSnapshot, saveCachedSnapshot, findCachedPrice } from "./lib/priceCache.js";
 
 // pdfjs is bundled locally in src/lib/ — no npm dependency, works fully offline.
 // The worker is loaded as a raw string and turned into a Blob URL so Safari
@@ -982,6 +981,19 @@ const GLOBAL_CSS = `
 
   /* ── Spinner animation ── */
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Page transition ── */
+  /* Plays automatically whenever a screen mounts fresh — which happens on
+     every nav-tab switch / detail-screen push since each is a distinct
+     early return in App(), so React swaps in a brand-new root element. */
+  @keyframes pageEnter {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .page-root { animation: pageEnter 0.32s cubic-bezier(0.16, 1, 0.3, 1); }
+  @media (prefers-reduced-motion: reduce) {
+    .page-root { animation: none !important; }
+  }
 `;
 
 // ─── Styles object (layout + component tokens — all colours via CSS vars) ─────
@@ -1047,7 +1059,7 @@ function EyeOffIcon() {
 }
 
 // ─── Stock Analysis Screen ────────────────────────────────────────────────────
-function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden, liveSnapshot }) {
+function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden }) {
 
   // ── Input state ───────────────────────────────────────────────────────────
   const [symbol,        setSymbol]        = useState("");
@@ -1072,39 +1084,34 @@ function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, set
   const [fetchMsg,      setFetchMsg]      = useState("");   // status message after fetch
   const [autoFilled,    setAutoFilled]    = useState(false); // true when fields came from API
 
-  // ── Look up the symbol in the already-fetched live snapshot ───────────────
-  // No network call happens here on purpose: the GSE-API is free and
-  // aggressively rate-limited, so the ONLY place the app is allowed to hit
-  // it is the "Fetch Live Prices" button on the main screen. This screen
-  // just reads whatever that button last cached.
-  function fetchStockData() {
+  // ── Fetch live data from kwayisi API for a given symbol ───────────────────
+  async function fetchStockData() {
     if (!symbol.trim()) return;
-    setFetchMsg(""); setAutoFilled(false);
+    setFetchingData(true); setFetchMsg(""); setAutoFilled(false);
+    try {
+      const res = await fetch(`/api/gse-live/${symbol.trim().toUpperCase()}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || (res.status === 404 ? `Symbol "${symbol}" not found on GSE.` : `API error ${res.status}`));
+      }
+      const d = await res.json();
+      // d = { name, price, change, volume }
+      const price    = d.price;
+      const chg      = d.change ?? 0;
+      const prevCalc = chg !== 0 ? parseFloat((price / (1 + chg / 100)).toFixed(4)) : price;
+      const vol      = d.volume ?? 0;
 
-    if (!liveSnapshot) {
-      setFetchMsg("⚠ No live prices cached yet. Go to the Stocks screen and tap \"Fetch Live Prices\" first.");
-      return;
+      setCurrentPrice(String(price));
+      setPrevClose(String(prevCalc));
+      setDailyVolume(String(vol));
+      // Prev close also doubles as open if open not known
+      if (!openPrice) setOpenPrice(String(prevCalc));
+      setAutoFilled(true);
+      setFetchMsg(`✓ Fetched ${d.name}: GHS ${price}  ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%  Vol: ${vol.toLocaleString()}`);
+    } catch (err) {
+      setFetchMsg(`⚠ ${err.message}`);
     }
-
-    const d = findCachedPrice(liveSnapshot, symbol);
-    if (!d) {
-      setFetchMsg(`⚠ "${symbol.trim().toUpperCase()}" wasn't in the last fetched snapshot (updated ${liveSnapshot.fetchedAt.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}). Try "Fetch Live Prices" again if this looks stale.`);
-      return;
-    }
-
-    // d = { name, price, change, volume }
-    const price    = d.price;
-    const chg      = d.change ?? 0;
-    const prevCalc = chg !== 0 ? parseFloat((price / (1 + chg / 100)).toFixed(4)) : price;
-    const vol      = d.volume ?? 0;
-
-    setCurrentPrice(String(price));
-    setPrevClose(String(prevCalc));
-    setDailyVolume(String(vol));
-    // Prev close also doubles as open if open not known
-    if (!openPrice) setOpenPrice(String(prevCalc));
-    setAutoFilled(true);
-    setFetchMsg(`✓ From cached snapshot (${liveSnapshot.fetchedAt.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}) — ${d.name}: GHS ${price}  ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%  Vol: ${vol.toLocaleString()}`);
+    setFetchingData(false);
   }
 
   // ── Parse inputs ──────────────────────────────────────────────────────────
@@ -1358,7 +1365,7 @@ function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, set
   const fieldLabel = txt => <div style={{ ...S.label, marginBottom: 3 }}>{txt}</div>;
   const sectionHdr = txt => <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-accent)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: -2, marginTop: 2 }}>{txt}</div>;
   return (
-    <div style={S.root}>
+    <div className="page-root" style={S.root}>
       {/* Header */}
       <div style={{ ...S.header, position: "sticky", top: 0, background: "var(--clr-bg)", zIndex: 10, boxShadow: "0 2px 12px var(--clr-shadow)" }}>
         <div style={{ ...S.row, alignItems: "flex-start" }}>
@@ -1822,8 +1829,20 @@ function StockAnalysisScreen({ portfolio, lightTheme, setLightTheme, hidden, set
 }
 
 // ─── Monthly Purchases Screen ────────────────────────────────────────────────
-function MonthlyScreen({ portfolio, hidden, setHidden, lightTheme, setLightTheme }) {
+function MonthlyScreen({ portfolio, hidden, setHidden, lightTheme, setLightTheme, activePortfolioId }) {
   const [expanded, setExpanded] = useState(null); // "YYYY-MM" key of open month
+  const [aiReports, setAiReports] = useState({});   // { [monthKey]: { report, generatedAt } }
+  const [aiLoadingKey, setAiLoadingKey] = useState(null);
+  const [aiErrorKey, setAiErrorKey] = useState({});  // { [monthKey]: errorMessage }
+
+  // Load any cached reports for this portfolio when it's switched
+  useEffect(() => {
+    setAiReports({}); setAiErrorKey({});
+    try {
+      const raw = localStorage.getItem(`ai-reports-${activePortfolioId}`);
+      if (raw) setAiReports(JSON.parse(raw));
+    } catch { /* ignore malformed cache */ }
+  }, [activePortfolioId]);
 
   // ── Collect & group all trades by month ───────────────────────────────────
   const allTrades = [];
@@ -1858,16 +1877,72 @@ function MonthlyScreen({ portfolio, hidden, setHidden, lightTheme, setLightTheme
   const totalInvested = allTrades.reduce((s, t) => s + (t.consideration ?? 0) + (t.charges ?? 0), 0);
   const totalShares   = allTrades.reduce((s, t) => s + (t.shares ?? 0), 0);
 
+  const fmtGHSPlain = v => `GHS ${v.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  async function generateMonthlyReport(key, trades, syms, mTotal, mShares) {
+    setAiLoadingKey(key);
+    setAiErrorKey(prev => ({ ...prev, [key]: "" }));
+    try {
+      const tradesPayload = trades.map(t => ({
+        date: t.date, symbol: t.symbol, shares: t.shares,
+        pricePerShare: t.pricePerShare, considerationGHS: +((t.consideration ?? 0)).toFixed(2),
+        chargesGHS: +((t.charges ?? 0)).toFixed(2),
+      }));
+      const portfolioContext = {
+        totalMonthInvestedGHS: +mTotal.toFixed(2),
+        totalMonthShares: mShares,
+        distinctStocksThisMonth: syms.length,
+        currentHoldingsCount: Object.keys(portfolio).length,
+      };
+
+      const res  = await fetch("/api/ai-monthly-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month: monthLabel(key), trades: tradesPayload, portfolioContext }) });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message || `Request failed (${res.status})`);
+
+      const generatedAt = new Date().toISOString();
+      setAiReports(prev => {
+        const next = { ...prev, [key]: { report: body.report, generatedAt } };
+        try { localStorage.setItem(`ai-reports-${activePortfolioId}`, JSON.stringify(next)); } catch {}
+        return next;
+      });
+    } catch (err) {
+      setAiErrorKey(prev => ({ ...prev, [key]: err.message }));
+    }
+    setAiLoadingKey(null);
+  }
+
+  function downloadReport(key) {
+    const entry = aiReports[key];
+    if (!entry) return;
+    const blob = new Blob([`# Monthly Report — ${monthLabel(key)}\n\n${entry.report}`], { type: "text/markdown" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `report-${key}.md`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function monthLabel(key) {
     const [y, m] = key.split("-");
     return new Date(parseInt(y), parseInt(m) - 1, 1)
       .toLocaleDateString("en-GH", { month: "long", year: "numeric" });
   }
 
-  const fmtGHSPlain = v => `GHS ${v.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Minimal markdown → JSX renderer for the report's "## Heading" + prose shape
+  // (Claude's output here is intentionally simple — headings and paragraphs
+  // only — so a small hand-rolled renderer avoids pulling in a markdown lib.)
+  function renderReportMarkdown(md) {
+    return md.split(/\n{2,}/).map((block, i) => {
+      const trimmed = block.trim();
+      if (!trimmed) return null;
+      if (trimmed.startsWith("## ")) {
+        return <div key={i} style={{ fontWeight: 700, fontSize: "var(--fs-md)", marginTop: i === 0 ? 0 : "var(--gap-md)", marginBottom: 4 }}>{trimmed.slice(3)}</div>;
+      }
+      return <div key={i} style={{ fontSize: "var(--fs-base)", lineHeight: 1.65, color: "var(--clr-text)" }}>{trimmed}</div>;
+    });
+  }
 
   return (
-    <div style={S.root}>
+    <div className="page-root" style={S.root}>
       {/* Header */}
       <div style={S.header}>
         <div style={{ ...S.row, alignItems: "flex-start" }}>
@@ -1999,6 +2074,46 @@ function MonthlyScreen({ portfolio, hidden, setHidden, lightTheme, setLightTheme
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "clamp(10px,2.8vw,13px) var(--gutter,18px)", background: "var(--clr-card-alt)", borderTop: "2px solid var(--clr-border)" }}>
                     <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", fontWeight: 600 }}>Month total</div>
                     <div style={{ fontWeight: 800, fontSize: "var(--fs-md)" }}>{hidden ? "••••••" : fmtGHSPlain(mTotal)}</div>
+                  </div>
+
+                  {/* ── AI monthly report ── */}
+                  <div style={{ padding: "clamp(12px,3vw,16px) var(--gutter,18px)", background: "var(--clr-bg)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: aiReports[key] || aiErrorKey[key] ? "var(--gap-sm)" : 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: "var(--fs-md)" }}>✨</span>
+                        <span style={{ fontWeight: 700, fontSize: "var(--fs-base)" }}>AI Report</span>
+                      </div>
+                      <div style={{ display: "flex", gap: "var(--gap-sm)" }}>
+                        {aiReports[key] && (
+                          <button onClick={() => downloadReport(key)}
+                            style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-dim)", borderRadius: 8, padding: "5px 10px", fontSize: "var(--fs-xs)", fontWeight: 600, cursor: "pointer" }}>
+                            ⬇ .md
+                          </button>
+                        )}
+                        <button onClick={() => generateMonthlyReport(key, trades, syms, mTotal, mShares)} disabled={aiLoadingKey === key}
+                          style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-accent)", borderRadius: 8, padding: "5px 12px", fontSize: "var(--fs-xs)", fontWeight: 700, cursor: aiLoadingKey === key ? "default" : "pointer", opacity: aiLoadingKey === key ? 0.6 : 1 }}>
+                          {aiLoadingKey === key ? <><Spinner /> Writing…</> : aiReports[key] ? "↻ Regenerate" : "Generate Report"}
+                        </button>
+                      </div>
+                    </div>
+                    {aiReports[key] && aiLoadingKey !== key && (
+                      <>
+                        <div style={{ borderRadius: "var(--radius-card)", border: "1px solid var(--clr-border)", background: "var(--clr-card)", padding: "clamp(12px,3vw,16px)" }}>
+                          {renderReportMarkdown(aiReports[key].report)}
+                        </div>
+                        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "var(--gap-sm)" }}>
+                          Generated {new Date(aiReports[key].generatedAt).toLocaleString("en-GH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      </>
+                    )}
+                    {aiErrorKey[key] && aiLoadingKey !== key && (
+                      <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-red)", lineHeight: 1.6 }}>{aiErrorKey[key]}</div>
+                    )}
+                    {!aiReports[key] && !aiErrorKey[key] && aiLoadingKey !== key && (
+                      <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", lineHeight: 1.6 }}>
+                        Get a written recap of this month's trading activity, downloadable as Markdown.
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -2170,7 +2285,7 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
   if (archiveView) {
     const allSymbols = [...new Set(stocks.map(s => s.symbol))].sort();
     return (
-      <div style={S.root}>
+      <div className="page-root" style={S.root}>
         <div style={S.header}>
           <button className="back-btn" onClick={() => { setArchiveView(false); setArchiveDate(null); setArchiveSym(null); }}>← Back</button>
           <div style={{ ...S.row, alignItems: "flex-start" }}>
@@ -2267,7 +2382,7 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
     : rdTarget;
 
   return (
-    <div style={S.root}>
+    <div className="page-root" style={S.root}>
       <div style={S.header}>
         <div style={{ ...S.row, alignItems: "flex-start" }}>
           <div>
@@ -2560,7 +2675,7 @@ function TBillsScreen({ tbills, hidden, tbillSheet, setTbillSheet, editingTbill,
   const totalMaturity  = tbills.reduce((s, x) => s + x.maturityAmount, 0);
   const totalEarnings  = totalMaturity - totalInvested;
   return (
-    <div style={S.root}>
+    <div className="page-root" style={S.root}>
       {showCalc && <TBillCalculator onClose={() => setShowCalc(false)} />}
       <div style={S.header}>
         <div style={{ ...S.row, alignItems: "flex-start" }}>
@@ -2708,7 +2823,7 @@ function MutualFundsScreen({ mfunds, hidden, mfSheet, setMfSheet, editingMF, set
     return s + entries[entries.length - 1].maturityAmount;
   }, 0);
   return (
-    <div style={S.root}>
+    <div className="page-root" style={S.root}>
       <div style={S.header}>
         <div style={{ ...S.row, alignItems: "flex-start" }}>
           <div>
@@ -2845,7 +2960,25 @@ function MutualFundsScreen({ mfunds, hidden, mfSheet, setMfSheet, editingMF, set
 }
 
 // ─── Summary Screen ───────────────────────────────────────────────────────────
-function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightTheme, setLightTheme, lastUpdated }) {
+function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightTheme, setLightTheme, lastUpdated, activePortfolioId }) {
+  const [aiSummary,      setAiSummary]      = useState(null);
+  const [aiLoading,      setAiLoading]      = useState(false);
+  const [aiError,        setAiError]        = useState("");
+  const [aiGeneratedAt,  setAiGeneratedAt]  = useState(null);
+
+  // Load any cached summary for this portfolio when it's switched
+  useEffect(() => {
+    setAiSummary(null); setAiGeneratedAt(null); setAiError("");
+    try {
+      const raw = localStorage.getItem(`ai-summary-${activePortfolioId}`);
+      if (raw) {
+        const { summary, generatedAt } = JSON.parse(raw);
+        setAiSummary(summary);
+        setAiGeneratedAt(generatedAt);
+      }
+    } catch { /* ignore malformed cache */ }
+  }, [activePortfolioId]);
+
   const stocks         = Object.values(portfolio);
   const stocksValue    = stocks.reduce((s, x) => s + (x.currentPrice !== null ? x.currentPrice * x.totalShares : x.totalCost), 0);
   const stocksInvested = stocks.reduce((s, x) => s + x.totalCost, 0);
@@ -2884,6 +3017,45 @@ function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightThem
     return d.toLocaleDateString("en-GH", { weekday: "short", day: "numeric", month: "short" });
   }
 
+  async function generateAiSummary() {
+    setAiLoading(true); setAiError("");
+    try {
+      const stats = {
+        totalValue:     +totalValue.toFixed(2),
+        totalInvested:  +totalInvested.toFixed(2),
+        totalEarnings:  +totalEarnings.toFixed(2),
+        totalEarnPct:   +totalEarnPct.toFixed(2),
+        todayChange: hasDayData ? { amountGHS: +totalDayPnl.toFixed(2), pct: +totalDayPct.toFixed(2) } : null,
+        allocation: [
+          { name: "Stocks",       valueGHS: +stocksValue.toFixed(2), investedGHS: +stocksInvested.toFixed(2), pctOfPortfolio: totalValue ? +((stocksValue / totalValue) * 100).toFixed(1) : 0 },
+          { name: "T-Bills",      valueGHS: +tbMaturity.toFixed(2),  investedGHS: +tbInvested.toFixed(2),     pctOfPortfolio: totalValue ? +((tbMaturity / totalValue) * 100).toFixed(1) : 0 },
+          { name: "Mutual Funds", valueGHS: +mfLatest.toFixed(2),    investedGHS: +mfPrincipal.toFixed(2),    pctOfPortfolio: totalValue ? +((mfLatest / totalValue) * 100).toFixed(1) : 0 },
+        ],
+        topDayMovers: hasDayData
+          ? dayStocks
+              .map(s => ({ symbol: s.symbol, dayChangePct: +(((s.currentPrice - s.prevPrice) / s.prevPrice) * 100).toFixed(2) }))
+              .sort((a, b) => Math.abs(b.dayChangePct) - Math.abs(a.dayChangePct))
+              .slice(0, 3)
+          : [],
+        holdingsCount: stocks.length,
+        tbillCount:    tbills.length,
+        mutualFundCount: mfunds.length,
+      };
+
+      const res  = await fetch("/api/ai-summary", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stats }) });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message || `Request failed (${res.status})`);
+
+      const generatedAt = new Date().toISOString();
+      setAiSummary(body.summary);
+      setAiGeneratedAt(generatedAt);
+      try { localStorage.setItem(`ai-summary-${activePortfolioId}`, JSON.stringify({ summary: body.summary, generatedAt })); } catch {}
+    } catch (err) {
+      setAiError(err.message);
+    }
+    setAiLoading(false);
+  }
+
   const fmtPlain = v => `GHS ${Math.abs(v).toLocaleString("en-GH", { minimumFractionDigits: 2 })}`;
   const tiles = [
     { icon: "📈", label: "Stocks Value",     value: fmtPlain(stocksValue),  sub: `${stocksPnl >= 0 ? "+" : ""}GHS ${Math.abs(stocksPnl).toLocaleString("en-GH",{minimumFractionDigits:2})} P&L`, subColor: col(stocksPnl) },
@@ -2892,7 +3064,7 @@ function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightThem
     { icon: "💰", label: "Total Invested",   value: fmtPlain(totalInvested),sub: "across all investments", subColor: "var(--clr-dim)" },
   ];
   return (
-    <div style={S.root}>
+    <div className="page-root" style={S.root}>
       <div style={S.header}>
         <div style={{ ...S.row, alignItems: "flex-start" }}>
           <div>
@@ -2904,6 +3076,38 @@ function SummaryScreen({ portfolio, tbills, mfunds, hidden, setHidden, lightThem
             <button className="eye-btn" onClick={() => setHidden(h => !h)}>{hidden ? <EyeOffIcon /> : <EyeIcon />}</button>
           </div>
         </div>
+      </div>
+
+      {/* ── AI Insights card ── */}
+      <div style={{ margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", border: "1px solid var(--clr-border)", background: "var(--clr-card)", padding: "clamp(14px,3.5vw,18px)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: aiSummary || aiLoading || aiError ? "var(--gap-sm)" : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: "var(--fs-lg)" }}>✨</span>
+            <span style={{ fontWeight: 700, fontSize: "var(--fs-md)" }}>AI Insights</span>
+          </div>
+          <button onClick={generateAiSummary} disabled={aiLoading}
+            style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-accent)", borderRadius: 8, padding: "5px 12px", fontSize: "var(--fs-xs)", fontWeight: 700, cursor: aiLoading ? "default" : "pointer", opacity: aiLoading ? 0.6 : 1 }}>
+            {aiLoading ? <><Spinner /> Thinking…</> : aiSummary ? "↻ Refresh" : "Generate"}
+          </button>
+        </div>
+        {aiSummary && !aiLoading && (
+          <>
+            <div style={{ fontSize: "var(--fs-base)", lineHeight: 1.65, color: "var(--clr-text)" }}>{aiSummary}</div>
+            {aiGeneratedAt && (
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "var(--gap-sm)" }}>
+                Generated {new Date(aiGeneratedAt).toLocaleString("en-GH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </div>
+            )}
+          </>
+        )}
+        {aiError && !aiLoading && (
+          <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-red)", lineHeight: 1.6 }}>{aiError}</div>
+        )}
+        {!aiSummary && !aiLoading && !aiError && (
+          <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", lineHeight: 1.6 }}>
+            Get a plain-English recap of your portfolio's performance, allocation, and today's movers.
+          </div>
+        )}
       </div>
 
       {/* ── Today's Movement card ── */}
@@ -3054,16 +3258,11 @@ export default function App() {
   const [manForm,        setManForm]        = useState({ symbol: "", shares: "", price: "", charges: "", date: "" });
   const [fetchingPrices, setFetchingPrices] = useState(false);
   const [fetchError,     setFetchError]     = useState("");
-  // liveSnapshot/lastUpdated seed from the persisted cache (if any) rather
-  // than null — this is the ONE place the GSE-API is ever hit, and every
-  // other screen (e.g. Stock Analysis) reads from this same cached snapshot
-  // instead of making its own request, so a page reload doesn't tempt
-  // anything into re-fetching.
-  const [lastUpdated,    setLastUpdated]    = useState(() => loadCachedSnapshot()?.fetchedAt ?? null);
+  const [lastUpdated,    setLastUpdated]    = useState(null);
   const [exportOpen,     setExportOpen]     = useState(false);
   const [confirmClear,   setConfirmClear]   = useState(false);
   const [hidden,         setHidden]         = useState(true);
-  const [liveSnapshot,   setLiveSnapshot]   = useState(() => loadCachedSnapshot());
+  const [liveSnapshot,   setLiveSnapshot]   = useState(null);
   const [showMarket,     setShowMarket]     = useState(false);
   const [lightTheme,     setLightTheme]     = useState(false);
   const [navTab,         setNavTab]         = useState("stocks"); // stocks | tbills | mutualfunds | summary
@@ -3313,22 +3512,17 @@ export default function App() {
     e.target.value = ""; setExportOpen(false);
   }
   async function fetchLivePrices() {
-	  console.log('fetching prices...');
     setFetchingPrices(true); setFetchError("");
     try {
-      const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
-	  console.log('data retrieved', res);
+      const res = await fetch("/api/gse-live");
       if (!res.ok) {
-        const body = await res.json().catch((error) => console.log('error', error));
-        if (body?.debug) console.error("[fetchLivePrices] upstream failure details:", body.debug);
+        const body = await res.json().catch(() => null);
         throw new Error(body?.message || `API error: ${res.status}`);
       }
       const data = await res.json();
       // Store full snapshot (sorted by % change desc) for market prices page
       const snapshot = [...data].sort((a, b) => b.change - a.change);
-      const snapshotObj = { items: snapshot, fetchedAt: new Date() };
-      setLiveSnapshot(snapshotObj);
-      saveCachedSnapshot(snapshotObj); // persist so other screens/reloads reuse it instead of re-fetching
+      setLiveSnapshot({ items: snapshot, fetchedAt: new Date() });
       // ── Archive today's prices ──────────────────────────────────────────
       const dateStr = today();
       phSaveSnapshot(dateStr, data).catch(console.error);
@@ -3494,7 +3688,7 @@ export default function App() {
   if (navTab === "summary") return (
     <>
       <SummaryScreen portfolio={portfolio} tbills={tbills} mfunds={mfunds}
-        lastUpdated={lastUpdated}
+        lastUpdated={lastUpdated} activePortfolioId={activePortfolioId}
         hidden={hidden} setHidden={setHidden} lightTheme={lightTheme} setLightTheme={setLightTheme} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
@@ -3502,7 +3696,7 @@ export default function App() {
 
   if (navTab === "history") return (
     <>
-      <MonthlyScreen portfolio={portfolio} hidden={hidden} setHidden={setHidden} lightTheme={lightTheme} setLightTheme={setLightTheme} />
+      <MonthlyScreen portfolio={portfolio} hidden={hidden} setHidden={setHidden} lightTheme={lightTheme} setLightTheme={setLightTheme} activePortfolioId={activePortfolioId} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
   );
@@ -3516,7 +3710,7 @@ export default function App() {
 
   if (navTab === "analyse") return (
     <>
-      <StockAnalysisScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} liveSnapshot={liveSnapshot} />
+      <StockAnalysisScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
   );
@@ -3535,7 +3729,7 @@ export default function App() {
 
     return (
       <>
-      <div style={S.root}>
+      <div className="page-root" style={S.root}>
 
         {/* Header */}
         <div style={S.header}>
@@ -3886,7 +4080,7 @@ export default function App() {
   // HOME SCREEN
   // ═══════════════════════════════════════════════════════════════════════════
   return (
-    <div style={S.root}>
+    <div className="page-root" style={S.root}>
 
       {/* ══ STICKY PANEL: header + hero + action buttons ══ */}
       <div className="sticky-panel">
