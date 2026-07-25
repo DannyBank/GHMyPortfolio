@@ -2126,7 +2126,7 @@ function MonthlyScreen({ portfolio, hidden, setHidden, lightTheme, setLightTheme
 }
 
 // ─── PerfStockRow — top-level so hooks are stable across renders ──────────────
-function PerfStockRow({ s, refPrice, rdStr, editing, editVal, setEditing, setEditVal, saveRef }) {
+function PerfStockRow({ s, refPrice, rdStr, editing, editVal, setEditing, setEditVal, saveRef, isManual, clearRef }) {
   const cur    = s.currentPrice;
   const ref    = refPrice;
   const change = cur != null && ref != null ? cur - ref : null;
@@ -2154,7 +2154,9 @@ function PerfStockRow({ s, refPrice, rdStr, editing, editVal, setEditing, setEdi
         </div>
       </div>
       <div style={{ marginTop: "var(--gap-sm)", display: "flex", alignItems: "center", gap: "var(--gap-sm)", flexWrap: "wrap" }}>
-        <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase" }}>Ref{rdStr ? ` (${rdStr})` : ""}</span>
+        <span style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 1.4, textTransform: "uppercase" }}>
+          Ref{isManual ? " (pinned)" : rdStr ? ` (${rdStr})` : ""}
+        </span>
         {editing === s.symbol ? (
           <>
             <input autoFocus type="number" value={editVal}
@@ -2179,6 +2181,12 @@ function PerfStockRow({ s, refPrice, rdStr, editing, editVal, setEditing, setEdi
               style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-accent)", borderRadius: 7, padding: "3px 10px", fontSize: "var(--fs-xs)", cursor: "pointer", fontWeight: 600 }}>
               {hasRef ? "Edit" : "Set"}
             </button>
+            {isManual && (
+              <button onClick={() => clearRef(s.symbol)} title="Revert to auto (archived) reference price"
+                style={{ background: "none", border: "1px solid var(--clr-border)", color: "var(--clr-dim)", borderRadius: 7, padding: "3px 10px", fontSize: "var(--fs-xs)", cursor: "pointer", fontWeight: 600 }}>
+                ↺ Auto
+              </button>
+            )}
           </>
         )}
       </div>
@@ -2187,13 +2195,14 @@ function PerfStockRow({ s, refPrice, rdStr, editing, editVal, setEditing, setEdi
 }
 
 // ─── Performance Screen ───────────────────────────────────────────────────────
-function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden }) {
+function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHidden, activePortfolioId }) {
   const now      = new Date();
   const thisYear = now.getFullYear();
 
   const [mode,        setMode]        = useState("ytd");
   const [customMths,  setCustomMths]  = useState("6");
   const [refPrices,   setRefPrices]   = useState({});   // { SYMBOL: number } — overrides
+  const [manualRefs,  setManualRefs]  = useState({});   // { SYMBOL: true } — user-set (persisted), protects from archive auto-fill
   const [editing,     setEditing]     = useState(null);
   const [editVal,     setEditVal]     = useState("");
   const [archiveDates,setArchiveDates]= useState([]);   // sorted desc
@@ -2207,6 +2216,16 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
   const [loadingRef,  setLoadingRef]  = useState(false);
 
   const stocks = Object.values(portfolio);
+
+  // ── Load persisted manual REF prices for this portfolio ───────────────────
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`ref-prices-${activePortfolioId}`);
+      const saved = raw ? JSON.parse(raw) : {};
+      setRefPrices(prev => ({ ...prev, ...saved }));
+      setManualRefs(Object.fromEntries(Object.keys(saved).map(sym => [sym, true])));
+    } catch { setManualRefs({}); }
+  }, [activePortfolioId]);
 
   // ── Load archive dates on mount ───────────────────────────────────────────
   useEffect(() => {
@@ -2240,10 +2259,11 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
       const rows = await phGetByDate(closest);
       const map  = {};
       for (const r of rows) map[r.symbol] = r.price;
-      // Only fill in symbols that don't have a manual override
+      // Only fill in symbols that don't have a manual (persisted) override
       setRefPrices(prev => {
         const next = { ...prev };
         for (const s of stocks) {
+          if (manualRefs[s.symbol]) continue;
           if (map[s.symbol] != null) next[s.symbol] = map[s.symbol];
         }
         return next;
@@ -2266,10 +2286,47 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
     setArchiveSymRows(rows.sort((a,b) => b.date.localeCompare(a.date)));
   }
 
+  function persistRefPrices(next) {
+    try { localStorage.setItem(`ref-prices-${activePortfolioId}`, JSON.stringify(next)); } catch {}
+  }
+
   function saveRef(sym) {
     const v = parseFloat(editVal);
-    if (!isNaN(v) && v > 0) setRefPrices(p => ({ ...p, [sym]: v }));
+    if (!isNaN(v) && v > 0) {
+      const nextManual = { ...manualRefs, [sym]: true };
+      const nextPrices = { ...refPrices, [sym]: v };
+      setRefPrices(nextPrices);
+      setManualRefs(nextManual);
+      const toSave = {};
+      for (const s of Object.keys(nextManual)) toSave[s] = nextPrices[s];
+      persistRefPrices(toSave);
+    }
     setEditing(null); setEditVal("");
+  }
+
+  function clearRef(sym) {
+    const nextManual = { ...manualRefs };
+    delete nextManual[sym];
+    setManualRefs(nextManual);
+    const toSave = {};
+    for (const s of Object.keys(nextManual)) toSave[s] = refPrices[s];
+    persistRefPrices(toSave);
+
+    // Revert to the archived value for the currently loaded reference date, if any
+    if (autoRefDate) {
+      phGetByDate(autoRefDate).then(rows => {
+        const hit = rows.find(r => r.symbol === sym);
+        setRefPrices(prev => {
+          const next = { ...prev };
+          if (hit) next[sym] = hit.price; else delete next[sym];
+          return next;
+        });
+      }).catch(() => {
+        setRefPrices(prev => { const next = { ...prev }; delete next[sym]; return next; });
+      });
+    } else {
+      setRefPrices(prev => { const next = { ...prev }; delete next[sym]; return next; });
+    }
   }
 
   const selBtnStyle = active => ({
@@ -2433,7 +2490,7 @@ function PerformanceScreen({ portfolio, lightTheme, setLightTheme, hidden, setHi
         <>
           <div className="section-label">Holdings · {stocks.length} stock{stocks.length !== 1 ? "s" : ""}</div>
           <div style={{ borderTop: "1px solid var(--clr-border)" }}>
-            {stocks.map(s => <PerfStockRow key={s.symbol} s={s} refPrice={refPrices[s.symbol]} rdStr={autoRefDate ?? ""} editing={editing} editVal={editVal} setEditing={setEditing} setEditVal={setEditVal} saveRef={saveRef} />)}
+            {stocks.map(s => <PerfStockRow key={s.symbol} s={s} refPrice={refPrices[s.symbol]} rdStr={autoRefDate ?? ""} editing={editing} editVal={editVal} setEditing={setEditing} setEditVal={setEditVal} saveRef={saveRef} isManual={!!manualRefs[s.symbol]} clearRef={clearRef} />)}
           </div>
           {(() => {
             const withRef = stocks.filter(s => refPrices[s.symbol] != null && s.currentPrice != null);
@@ -3703,7 +3760,7 @@ export default function App() {
 
   if (navTab === "perf") return (
     <>
-      <PerformanceScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} />
+      <PerformanceScreen portfolio={portfolio} lightTheme={lightTheme} setLightTheme={setLightTheme} hidden={hidden} setHidden={setHidden} activePortfolioId={activePortfolioId} />
       <BottomNav tab={navTab} setTab={t => { setNavTab(t); }} />
     </>
   );
