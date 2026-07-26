@@ -131,32 +131,62 @@ function setActivePortfolioDB(id) {
 const DB_VERSION = 4, STORE = "portfolio";
 const STORE_TB = "tbills", STORE_MF = "mutualfunds", STORE_PH = "price_history", STORE_GOALS = "goals";
 
+function applyDBSchema(db) {
+  if (!db.objectStoreNames.contains(STORE))
+    db.createObjectStore(STORE, { keyPath: "symbol" });
+  if (!db.objectStoreNames.contains(STORE_TB))
+    db.createObjectStore(STORE_TB, { keyPath: "id" });
+  if (!db.objectStoreNames.contains(STORE_MF))
+    db.createObjectStore(STORE_MF, { keyPath: "id" });
+  // price_history: id = "DATE|SYMBOL", indexed by date and symbol
+  if (!db.objectStoreNames.contains(STORE_PH)) {
+    const ph = db.createObjectStore(STORE_PH, { keyPath: "id" });
+    ph.createIndex("by_date",   "date",   { unique: false });
+    ph.createIndex("by_symbol", "symbol", { unique: false });
+  }
+  // goals: plans/notes attached to a stock symbol (symbol needn't be a
+  // current holding — you can plan to buy something you don't own yet)
+  if (!db.objectStoreNames.contains(STORE_GOALS)) {
+    const g = db.createObjectStore(STORE_GOALS, { keyPath: "id" });
+    g.createIndex("by_symbol", "symbol", { unique: false });
+  }
+}
+
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(dbNameFor(ACTIVE_PORTFOLIO_ID), DB_VERSION);
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE))
-        db.createObjectStore(STORE, { keyPath: "symbol" });
-      if (!db.objectStoreNames.contains(STORE_TB))
-        db.createObjectStore(STORE_TB, { keyPath: "id" });
-      if (!db.objectStoreNames.contains(STORE_MF))
-        db.createObjectStore(STORE_MF, { keyPath: "id" });
-      // price_history: id = "DATE|SYMBOL", indexed by date and symbol
-      if (!db.objectStoreNames.contains(STORE_PH)) {
-        const ph = db.createObjectStore(STORE_PH, { keyPath: "id" });
-        ph.createIndex("by_date",   "date",   { unique: false });
-        ph.createIndex("by_symbol", "symbol", { unique: false });
-      }
-      // goals: plans/notes attached to a stock symbol (symbol needn't be a
-      // current holding — you can plan to buy something you don't own yet)
-      if (!db.objectStoreNames.contains(STORE_GOALS)) {
-        const g = db.createObjectStore(STORE_GOALS, { keyPath: "id" });
-        g.createIndex("by_symbol", "symbol", { unique: false });
-      }
-    };
+    req.onupgradeneeded = e => applyDBSchema(e.target.result);
     req.onsuccess = e => resolve(e.target.result);
     req.onerror   = e => reject(e.target.error);
+  });
+}
+
+// Opens any portfolio's database by name directly, independent of which
+// portfolio is currently "active" in the UI. Used by the full-app backup/
+// restore feature, which needs to read and write every portfolio's data in
+// one pass, not just the one currently open.
+function openNamedDB(dbName) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(dbName, DB_VERSION);
+    req.onupgradeneeded = e => applyDBSchema(e.target.result);
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+async function namedStoreGetAll(dbName, storeName) {
+  const db = await openNamedDB(dbName);
+  return new Promise((res, rej) => {
+    const r = db.transaction(storeName, "readonly").objectStore(storeName).getAll();
+    r.onsuccess = e => res(e.target.result);
+    r.onerror   = e => rej(e.target.error);
+  });
+}
+async function namedStorePut(dbName, storeName, record) {
+  const db = await openNamedDB(dbName);
+  return new Promise((res, rej) => {
+    const r = db.transaction(storeName, "readwrite").objectStore(storeName).put(record);
+    r.onsuccess = e => res(e.target.result);
+    r.onerror   = e => rej(e.target.error);
   });
 }
 async function dbGetAll() {
@@ -728,6 +758,89 @@ function parsePortfolioBackup(text) {
   }
   for (const s of Object.values(map)) s.avgCost = s.totalCost / s.totalShares;
   return map;
+}
+
+// ─── Full App Backup ──────────────────────────────────────────────────────────
+// Unlike exportPortfolioBackup (stocks-only, one portfolio, for interop with
+// other GSE apps), this captures EVERYTHING needed to make a fresh install
+// look identical to right now: every portfolio's stocks, T-Bills, mutual
+// funds, and goals — plus the portfolio list itself and the small per-
+// portfolio settings (pinned REF prices, cached AI insights/reports) that
+// live in localStorage rather than IndexedDB.
+const FULL_BACKUP_SIGNATURE = "GHMYPORTFOLIO_FULL_BACKUP";
+
+async function exportFullBackup(portfolios) {
+  const portfolioBlocks = [];
+  for (const p of portfolios) {
+    const dbName = dbNameFor(p.id);
+    const [stocks, tbills, mutualfunds, goals] = await Promise.all([
+      namedStoreGetAll(dbName, STORE).catch(() => []),
+      namedStoreGetAll(dbName, STORE_TB).catch(() => []),
+      namedStoreGetAll(dbName, STORE_MF).catch(() => []),
+      namedStoreGetAll(dbName, STORE_GOALS).catch(() => []),
+    ]);
+    let refPrices = null, aiSummary = null, aiReports = null;
+    try { refPrices = JSON.parse(localStorage.getItem(`ref-prices-${p.id}`)  || "null"); } catch {}
+    try { aiSummary = JSON.parse(localStorage.getItem(`ai-summary-${p.id}`)  || "null"); } catch {}
+    try { aiReports = JSON.parse(localStorage.getItem(`ai-reports-${p.id}`)  || "null"); } catch {}
+
+    portfolioBlocks.push({
+      id: p.id, name: p.name, createdAt: p.createdAt,
+      stocks, tbills, mutualfunds, goals, refPrices, aiSummary, aiReports,
+    });
+  }
+
+  const payload = {
+    version:      "1.0",
+    exportDate:   new Date().toISOString(),
+    appSignature: FULL_BACKUP_SIGNATURE,
+    activePortfolioId: getActivePortfolioId(),
+    portfolios: portfolioBlocks,
+  };
+
+  const filename = `GHMyPortfolio_FullBackup_${new Date().toISOString().replace(/[-:]/g, "").replace("T", "_").slice(0, 15)}.json`;
+  triggerDownload(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), filename);
+}
+
+// Restores a Full App Backup: writes every portfolio's data back into its own
+// IndexedDB database, restores the portfolio registry + localStorage extras,
+// then reloads the page so every part of the app (which reads registry/active
+// portfolio at mount time) picks it all up cleanly rather than trying to
+// hot-patch a dozen pieces of React state in place.
+async function restoreFullBackup(file) {
+  const text = await file.text();
+  const data = JSON.parse(text);
+  if (data.appSignature !== FULL_BACKUP_SIGNATURE) {
+    throw new Error("Not a valid GHMyPortfolio full backup file.");
+  }
+  if (!Array.isArray(data.portfolios) || !data.portfolios.length) {
+    throw new Error("Backup file has no portfolios in it.");
+  }
+
+  for (const p of data.portfolios) {
+    const dbName = dbNameFor(p.id);
+    for (const rec of p.stocks || [])      await namedStorePut(dbName, STORE,        rec);
+    for (const rec of p.tbills || [])      await namedStorePut(dbName, STORE_TB,     rec);
+    for (const rec of p.mutualfunds || []) await namedStorePut(dbName, STORE_MF,     rec);
+    for (const rec of p.goals || [])       await namedStorePut(dbName, STORE_GOALS,  rec);
+
+    try {
+      if (p.refPrices)  localStorage.setItem(`ref-prices-${p.id}`,  JSON.stringify(p.refPrices));
+      if (p.aiSummary)  localStorage.setItem(`ai-summary-${p.id}`,  JSON.stringify(p.aiSummary));
+      if (p.aiReports)  localStorage.setItem(`ai-reports-${p.id}`,  JSON.stringify(p.aiReports));
+    } catch { /* localStorage full/unavailable — not fatal, core data already restored */ }
+  }
+
+  // Rebuild the portfolio registry from the backup (rather than merging with
+  // whatever's currently there) so names/order match the backup exactly.
+  const registry = data.portfolios.map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt || Date.now() }));
+  savePortfoliosRegistry(registry);
+  const activeId = data.activePortfolioId && registry.some(p => p.id === data.activePortfolioId)
+    ? data.activePortfolioId
+    : registry[0].id;
+  setActivePortfolioIdLS(activeId);
+
+  return { portfolioCount: registry.length };
 }
 
 // ─── Global responsive CSS (injected once into <head>) ────────────────────────
@@ -3721,6 +3834,7 @@ export default function App() {
   const fileRef         = useRef();
   const importRef       = useRef();
   const backupImportRef = useRef();
+  const fullBackupImportRef = useRef();
 
   // ── Inject global CSS once ────────────────────────────────────────────────
   useEffect(() => {
@@ -3938,6 +4052,34 @@ export default function App() {
       setPortfolio(built);
     } catch (err) { setError("Backup import failed: " + err.message); }
     e.target.value = ""; setExportOpen(false);
+  }
+
+  // ── Full App Backup (all portfolios, all data) ────────────────────────────
+  async function handleExportFullBackup() {
+    setLoading(true); setError(""); setLoadMsg("Preparing full backup…");
+    try {
+      await exportFullBackup(portfolios);
+    } catch (err) {
+      setError("Full backup export failed: " + err.message);
+    }
+    setLoading(false); setLoadMsg(""); setExportOpen(false);
+  }
+  async function handleFullBackupImport(e) {
+    const file = e.target.files[0]; if (!file) return;
+    setLoading(true); setError(""); setLoadMsg("Restoring full backup…");
+    try {
+      const { portfolioCount } = await restoreFullBackup(file);
+      setLoadMsg(`Restored ${portfolioCount} portfolio${portfolioCount !== 1 ? "s" : ""} — reloading…`);
+      // Every part of the app reads the portfolio registry / active portfolio
+      // at mount time, so a full reload is the simplest way to guarantee
+      // everything (nav state, open sheets, cached AI text, etc.) reflects
+      // the restored data cleanly rather than patching a dozen state pieces.
+      setTimeout(() => window.location.reload(), 900);
+    } catch (err) {
+      setError("Full backup restore failed: " + err.message);
+      setLoading(false); setLoadMsg("");
+    }
+    e.target.value = "";
   }
   async function fetchLivePrices() {
     setFetchingPrices(true); setFetchError("");
@@ -4676,6 +4818,7 @@ export default function App() {
           <input ref={fileRef}         type="file" accept={(STATEMENT_SOURCES.find(s => s.id === importSource) || STATEMENT_SOURCES[0]).accept} style={{ display: "none" }} onChange={handleFile} />
           <input ref={importRef}       type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
           <input ref={backupImportRef} type="file" accept=".txt"  style={{ display: "none" }} onChange={handleBackupImport} />
+          <input ref={fullBackupImportRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleFullBackupImport} />
 
           <button style={S.ghostBtn} onClick={() => setSourceSheetOpen(true)} disabled={loading}>
             {loading ? <><Spinner />{loadMsg}</> : "⬆ Import Statement"}
@@ -4910,6 +5053,27 @@ export default function App() {
             <button onClick={() => { setExportOpen(false); setConfirmClear(false); }}
               style={{ background: "none", border: "none", color: "var(--clr-dim)", fontSize: "var(--fs-xl)", cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
           </div>
+
+          <div style={{ ...S.label, color: "var(--clr-accent)" }}>🗄 Full App Backup (recommended)</div>
+          {loading && loadMsg && (loadMsg.includes("backup") || loadMsg.includes("Restor")) ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "clamp(12px,3vw,16px)", color: "var(--clr-accent)", fontSize: "var(--fs-base)", fontWeight: 600 }}>
+              <Spinner />{loadMsg}
+            </div>
+          ) : (
+            <div className="export-row">
+              <button style={{ ...S.exportBtn, background: "rgba(45,127,249,.1)", color: "var(--clr-accent)", border: "1px solid rgba(45,127,249,.3)" }}
+                onClick={handleExportFullBackup} disabled={loading}>
+                📦 Export Full Backup
+              </button>
+              <button style={{ ...S.exportBtn, background: "rgba(45,127,249,.1)", color: "var(--clr-accent)", border: "1px solid rgba(45,127,249,.3)" }}
+                onClick={() => fullBackupImportRef.current.click()} disabled={loading}>
+                📲 Restore Full Backup
+              </button>
+            </div>
+          )}
+          <div className="sheet-hint">Everything, in one file: every portfolio you have, all stocks, T-Bills, mutual funds, and goals — plus pinned reference prices and AI insights. Save this before reinstalling or switching devices, then restore it afterwards to get back to exactly where you were.</div>
+
+          <div style={{ ...S.divider, margin: "clamp(14px,3.5vw,20px) 0 clamp(10px,2.8vw,16px)" }} />
 
           <div style={S.label}>Export portfolio</div>
           <div className="export-row">
