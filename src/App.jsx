@@ -4815,30 +4815,36 @@ export default function App() {
 
         {/* Action buttons */}
         <div style={{ padding: "0 var(--gutter,18px) var(--gap-md,12px)" }}>
-          <input ref={fileRef}         type="file" accept={(STATEMENT_SOURCES.find(s => s.id === importSource) || STATEMENT_SOURCES[0]).accept} style={{ display: "none" }} onChange={handleFile} />
-          <input ref={importRef}       type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
-          <input ref={backupImportRef} type="file" accept=".txt"  style={{ display: "none" }} onChange={handleBackupImport} />
-          <input ref={fullBackupImportRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleFullBackupImport} />
+		  <input ref={fileRef} type="file" accept={(STATEMENT_SOURCES.find(s => s.id === importSource) || STATEMENT_SOURCES[0]).accept} style={{ display: "none" }} onChange={handleFile} />
+		  <input ref={importRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
+		  <input ref={backupImportRef} type="file" accept=".txt" style={{ display: "none" }} onChange={handleBackupImport} />
+		  <input ref={fullBackupImportRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleFullBackupImport} />
 
-          <button style={S.ghostBtn} onClick={() => setSourceSheetOpen(true)} disabled={loading}>
-            {loading ? <><Spinner />{loadMsg}</> : "⬆ Import Statement"}
-          </button>
-          {error && <div style={{ color: "var(--clr-red)", fontSize: "var(--fs-sm)", marginTop: "var(--gap-sm)" }}>{error}</div>}
+		  <div style={{ display: "flex", gap: "var(--gap-sm)" }}>
+			<button style={{ ...S.ghostBtn, width: "auto", flex: 1, marginTop: 0 }} onClick={() => setSourceSheetOpen(true)} disabled={loading}>
+			  {loading ? <><Spinner />{loadMsg}</> : "⬆ Import Statement"}
+			</button>
 
-          {stocks.length > 0 && (
-            <>
-              <button style={fetchingPrices ? S.liveBtnDis : S.liveBtn} onClick={fetchLivePrices} disabled={fetchingPrices}>
-                {fetchingPrices ? <><Spinner />Fetching GSE prices…</> : <><span>⚡</span>Fetch Live Prices</>}
-              </button>
-              {lastUpdated && !fetchingPrices && (
-                <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: "var(--gap-sm)", textAlign: "center" }}>
-                  Last updated {lastUpdated.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}
-                </div>
-              )}
-              {fetchError && <div className="notice-box">{fetchError}</div>}
-            </>
-          )}
-        </div>
+			{stocks.length > 0 && (
+			  <button style={{ ...(fetchingPrices ? S.liveBtnDis : S.liveBtn), width: "auto", flex: 1, marginTop: 0 }} onClick={fetchLivePrices} disabled={fetchingPrices}>
+				{fetchingPrices ? <><Spinner />Fetching…</> : <><span>⚡</span>Fetch Live Prices</>}
+			  </button>
+			)}
+		  </div>
+
+		  {error && <div style={{ color: "var(--clr-red)", fontSize: "var(--fs-sm)", marginTop: "var(--gap-sm)" }}>{error}</div>}
+
+		  {stocks.length > 0 && (
+			<>
+			  {lastUpdated && !fetchingPrices && (
+				<div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: "var(--gap-sm)", textAlign: "center" }}>
+				  Last updated {lastUpdated.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}
+				</div>
+			  )}
+			  {fetchError && <div className="notice-box">{fetchError}</div>}
+			</>
+		  )}
+		</div>
 
       </div>{/* end sticky-panel */}
 
