@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import Papa from "papaparse";
 
 // pdfjs is bundled locally in src/lib/ — no npm dependency, works fully offline.
 // The worker is loaded as a raw string and turned into a Blob URL so Safari
@@ -24,8 +25,9 @@ function col(v) { return v > 0 ? GREEN : v < 0 ? RED : DIM; }
 // Add a new entry here (plus a matching parser + branch in handleFile) to
 // support another broker/statement format.
 const STATEMENT_SOURCES = [
-  { id: "ic",        name: "IC Wealth",  desc: "IC Securities · GSE trade confirmations" },
-  { id: "blackstar",  name: "Blackstar",  desc: "Black Star Advisors · Client Account Statement" },
+  { id: "ic",        name: "IC Wealth",  desc: "IC Securities · GSE trade confirmations (PDF)",        accept: ".pdf", unitLabel: "transaction" },
+  { id: "blackstar",  name: "Blackstar",  desc: "Black Star Advisors · Client Account Statement (PDF)",  accept: ".pdf", unitLabel: "holding" },
+  { id: "csv",       name: "CSV File",   desc: "Generic trade list — any broker, as a spreadsheet export", accept: ".csv", unitLabel: "transaction" },
 ];
 
 // ─── Theme tokens ─────────────────────────────────────────────────────────────
@@ -435,6 +437,179 @@ async function extractBlackstarStatement(file) {
     throw new Error("No holdings found in the Portfolio Holdings section of this PDF.");
   }
   return { trades, wtdAvgMap: {}, holdingsMeta };
+}
+
+// ─── Generic CSV statement parser ─────────────────────────────────────────────
+// Works with a plain spreadsheet export from any broker — no PDF layout to
+// reverse-engineer. Column names are matched case-insensitively with a few
+// common aliases, so "Shares", "Quantity", and "Qty" are all accepted, etc.
+// Required columns: date, symbol, shares, price.
+// Optional columns: consideration (defaults to shares × price), charges
+// (defaults to 0), type ("buy"/"sell", defaults to "buy").
+const CSV_COLUMN_ALIASES = {
+  date:          ["date", "transaction date", "trade date", "settlement date"],
+  symbol:        ["symbol", "stock", "ticker", "description"],
+  shares:        ["shares", "quantity", "qty", "units"],
+  price:         ["price", "price per share", "unit price", "priceperunit", "pricepershare"],
+  consideration: ["consideration", "amount", "value", "cost"],
+  charges:       ["charges", "fees", "fee", "commission"],
+  type:          ["type", "action", "activity"],
+};
+
+function csvPick(row, field) {
+  const aliases = CSV_COLUMN_ALIASES[field];
+  const keys = Object.keys(row);
+  for (const alias of aliases) {
+    const match = keys.find(k => k.trim().toLowerCase() === alias);
+    if (match && String(row[match]).trim() !== "") return row[match];
+  }
+  return null;
+}
+
+// Returns a downloadable template so people know the expected shape.
+function csvTemplateText() {
+  return [
+    "Date,Symbol,Shares,Price,Consideration,Charges,Type",
+    "15/01/2026,GCB,100,42.50,4250.00,25.00,Buy",
+    "02/03/2026,MTNGH,50,6.30,315.00,5.00,Buy",
+    "10/04/2026,GCB,20,44.00,880.00,10.00,Sell",
+  ].join("\n");
+}
+
+async function extractCsvStatement(file) {
+  const text = await file.text();
+
+  const parsed = await new Promise((resolve, reject) => {
+    Papa.parse(text, {
+      header: true,
+      skipEmptyLines: true,
+      complete: resolve,
+      error: reject,
+    });
+  });
+
+  if (parsed.errors?.length) {
+    const first = parsed.errors[0];
+    throw new Error(`Couldn't read the CSV (row ${first.row ?? "?"}): ${first.message}`);
+  }
+  if (!parsed.data.length) {
+    throw new Error("The CSV appears to be empty.");
+  }
+
+  const trades = [];
+  let skipped = 0;
+
+  for (const row of parsed.data) {
+    const date   = csvPick(row, "date");
+    const symbol = csvPick(row, "symbol");
+    const shares = safeFloat(csvPick(row, "shares"));
+    const price  = safeFloat(csvPick(row, "price"));
+
+    if (!date || !symbol || !shares || !price) { skipped++; continue; }
+
+    const considerationRaw = csvPick(row, "consideration");
+    const consideration = considerationRaw != null ? safeFloat(considerationRaw) : shares * price;
+    const charges = safeFloat(csvPick(row, "charges") ?? 0);
+    const typeRaw = (csvPick(row, "type") || "buy").toString().trim().toLowerCase();
+    const type = typeRaw.includes("sell") ? "sell" : "buy";
+
+    trades.push({
+      date: String(date).trim(),
+      shares,
+      symbol: String(symbol).trim().toUpperCase(),
+      pricePerShare: price,
+      consideration,
+      charges,
+      type,
+    });
+  }
+
+  if (!trades.length) {
+    throw new Error(
+      "No usable rows found. Make sure the CSV has Date, Symbol, Shares, and Price columns" +
+      (skipped ? ` (${skipped} row${skipped !== 1 ? "s" : ""} skipped for missing data).` : ".")
+    );
+  }
+
+  return { trades, wtdAvgMap: {}, skipped };
+}
+
+// ─── Generic CSV import ────────────────────────────────────────────────────────
+// A broker-agnostic escape hatch: import trades from a plain CSV (e.g. one you
+// built yourself in Excel/Google Sheets, or exported from a broker not
+// natively supported). Expected header row (case-insensitive, any column
+// order): Date, Symbol, Shares, Price, and optionally Type (Buy/Sell — Buy is
+// assumed if omitted) and Charges (0 if omitted).
+//
+// Example:
+//   Date,Symbol,Type,Shares,Price,Charges
+//   2026-01-15,GCB,Buy,100,42.50,2.50
+//   2026-02-01,GCB,Sell,20,45.00,1.20
+function parseCsvLine(line) {
+  const out = [];
+  let cur = "", inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false;
+      } else cur += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ",") { out.push(cur); cur = ""; }
+      else cur += c;
+    }
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+async function extractTradesFromCSV(file) {
+  const text  = await file.text();
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+  if (lines.length < 2) {
+    throw new Error("This CSV looks empty — it needs a header row plus at least one trade.");
+  }
+
+  const header  = parseCsvLine(lines[0]).map(h => h.toLowerCase());
+  const findCol = name => header.findIndex(h => h === name);
+
+  const dateCol    = findCol("date");
+  const symCol     = findCol("symbol");
+  const sharesCol  = findCol("shares");
+  const priceCol   = findCol("price");
+  const typeCol    = findCol("type");
+  const chargesCol = findCol("charges");
+
+  if (dateCol === -1 || symCol === -1 || sharesCol === -1 || priceCol === -1) {
+    throw new Error('CSV must include "Date", "Symbol", "Shares", and "Price" columns (Type and Charges are optional).');
+  }
+
+  const trades = [];
+  let skipped = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const cells   = parseCsvLine(lines[i]);
+    const date    = cells[dateCol]?.trim();
+    const symbol  = cells[symCol]?.trim().toUpperCase();
+    const shares  = safeFloat(cells[sharesCol]);
+    const price   = safeFloat(cells[priceCol]);
+    const charges = chargesCol !== -1 ? safeFloat(cells[chargesCol]) : 0;
+    const typeRaw = typeCol !== -1 ? (cells[typeCol] || "").trim().toLowerCase() : "buy";
+    const type    = typeRaw.startsWith("s") ? "sell" : "buy";
+
+    if (!date || !symbol || !shares || !price) { skipped++; continue; }
+
+    trades.push({
+      date, symbol, shares, pricePerShare: price,
+      consideration: +(shares * price).toFixed(2),
+      charges, type,
+    });
+  }
+
+  if (!trades.length) {
+    throw new Error("No valid rows found. Each row needs a Date, Symbol, Shares, and Price.");
+  }
+  return { trades, wtdAvgMap: {}, skipped };
 }
 
 // ─── Export helpers ──────────────────────────────────────────────────────────
@@ -3530,7 +3705,7 @@ export default function App() {
   const [dcaTarget,      setDcaTarget]      = useState("");
   // Statement source (which broker/format the imported PDF comes from)
   const [sourceSheetOpen, setSourceSheetOpen] = useState(false);
-  const [importSource,    setImportSource]    = useState("ic"); // "ic" | "blackstar"
+  const [importSource,    setImportSource]    = useState("ic"); // "ic" | "blackstar" | "csv"
   // Multi-portfolio management
   const [portfolios,          setPortfolios]          = useState(() => loadPortfoliosRegistry());
   const [activePortfolioId,   setActivePortfolioIdSt] = useState(() => getActivePortfolioId());
@@ -3647,24 +3822,29 @@ export default function App() {
     setPortfolio(prev => { const n = { ...prev }; delete n[sym]; return n; });
   }, []);
 
-  // ── PDF import ────────────────────────────────────────────────────────────
+  // ── Statement import (PDF or CSV, depending on source picked) ─────────────
   async function handleFile(e) {
     const file = e.target.files[0]; if (!file) return;
-    setLoading(true); setError(""); setLoadMsg("Reading PDF…");
+    const sourceMeta = STATEMENT_SOURCES.find(s => s.id === importSource) || STATEMENT_SOURCES[0];
+    setLoading(true); setError(""); setLoadMsg(`Reading ${sourceMeta.accept === ".csv" ? "CSV" : "PDF"}…`);
     try {
-      const isBlackstar = importSource === "blackstar";
-      const { trades, wtdAvgMap, holdingsMeta } = isBlackstar
-        ? await extractBlackstarStatement(file)
-        : await extractTradesFromPDF(file);
+      const { trades, wtdAvgMap, holdingsMeta, skipped } =
+        importSource === "blackstar" ? await extractBlackstarStatement(file) :
+        importSource === "csv"       ? await extractTradesFromCSV(file) :
+        await extractTradesFromPDF(file);
+
       if (!trades?.length) {
-        setError(isBlackstar
-          ? "No holdings found. Ensure the PDF is a Black Star Advisors statement."
-          : "No 'Bought' transactions found. Ensure the PDF is from IC Securities.");
+        setError(
+          importSource === "blackstar" ? "No holdings found. Ensure the PDF is a Black Star Advisors statement." :
+          importSource === "csv"       ? "No valid rows found. Each row needs a Date, Symbol, Shares, and Price." :
+          "No 'Bought' transactions found. Ensure the PDF is from IC Securities."
+        );
       } else {
-        setLoadMsg(isBlackstar ? `Found ${trades.length} holdings…` : `Found ${trades.length} transactions…`);
-        setPendingTrades({ trades, wtdAvgMap, holdingsMeta }); // show merge/replace choice sheet
+        const unit = sourceMeta.unitLabel || "transaction";
+        setLoadMsg(`Found ${trades.length} ${unit}${trades.length !== 1 ? "s" : ""}${skipped ? ` (${skipped} row${skipped !== 1 ? "s" : ""} skipped)` : ""}…`);
+        setPendingTrades({ trades, wtdAvgMap, holdingsMeta, skipped }); // show merge/replace choice sheet
       }
-    } catch (err) { setError("Error parsing PDF: " + err.message); }
+    } catch (err) { setError(`Error reading ${sourceMeta.accept === ".csv" ? "CSV" : "PDF"}: ` + err.message); }
     setLoading(false); setLoadMsg(""); e.target.value = "";
   }
 
@@ -3762,9 +3942,9 @@ export default function App() {
   async function fetchLivePrices() {
     setFetchingPrices(true); setFetchError("");
     try {
-      const res = await fetch("https://dev.kwayisi.org/apis/gse/live");
+      const res = await fetch("/api/gse-live");
       if (!res.ok) {
-        const body = await res.json().catch((error) => console.log('error', error));
+        const body = await res.json().catch(() => null);
         throw new Error(body?.message || `API error: ${res.status}`);
       }
       const data = await res.json();
@@ -4493,12 +4673,12 @@ export default function App() {
 
         {/* Action buttons */}
         <div style={{ padding: "0 var(--gutter,18px) var(--gap-md,12px)" }}>
-          <input ref={fileRef}         type="file" accept=".pdf"  style={{ display: "none" }} onChange={handleFile} />
+          <input ref={fileRef}         type="file" accept={(STATEMENT_SOURCES.find(s => s.id === importSource) || STATEMENT_SOURCES[0]).accept} style={{ display: "none" }} onChange={handleFile} />
           <input ref={importRef}       type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
           <input ref={backupImportRef} type="file" accept=".txt"  style={{ display: "none" }} onChange={handleBackupImport} />
 
           <button style={S.ghostBtn} onClick={() => setSourceSheetOpen(true)} disabled={loading}>
-            {loading ? <><Spinner />{loadMsg}</> : "⬆ Import PDF Statement"}
+            {loading ? <><Spinner />{loadMsg}</> : "⬆ Import Statement"}
           </button>
           {error && <div style={{ color: "var(--clr-red)", fontSize: "var(--fs-sm)", marginTop: "var(--gap-sm)" }}>{error}</div>}
 
@@ -4599,7 +4779,7 @@ export default function App() {
         <div className="bottom-sheet">
           <div className="sheet-title">Which statement is this?</div>
           <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)", marginBottom: "var(--gap-md)", lineHeight: 1.6 }}>
-            Pick the source so the PDF gets parsed correctly.
+            Pick the source so the file gets parsed correctly.
           </div>
           {STATEMENT_SOURCES.map(src => (
             <button key={src.id} style={{ ...S.btn, marginTop: 0, marginBottom: "var(--gap-sm)", textAlign: "left", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, padding: "clamp(12px,3vw,16px) clamp(14px,3.5vw,18px)" }}
@@ -4665,12 +4845,12 @@ export default function App() {
         </div>
       )}
 
-      {/* ── PDF import mode choice sheet ── */}
+      {/* ── Import mode choice sheet ── */}
       {pendingTrades && (
         <div className="bottom-sheet">
           <div className="sheet-title">Statement Imported</div>
           <div style={{ fontSize: "var(--fs-base)", color: "var(--clr-dim)", marginBottom: "var(--gap-md)", lineHeight: 1.6 }}>
-            Found <strong style={{ color: "var(--clr-text)" }}>{pendingTrades.trades.length} {importSource === "blackstar" ? "holding" : "transaction"}{pendingTrades.trades.length !== 1 ? "s" : ""}</strong> in this statement.
+            Found <strong style={{ color: "var(--clr-text)" }}>{pendingTrades.trades.length} {(STATEMENT_SOURCES.find(s => s.id === importSource) || STATEMENT_SOURCES[0]).unitLabel}{pendingTrades.trades.length !== 1 ? "s" : ""}</strong> in this statement{pendingTrades.skipped ? ` (${pendingTrades.skipped} row${pendingTrades.skipped !== 1 ? "s" : ""} skipped — missing data)` : ""}.
             How would you like to apply them?
           </div>
 
