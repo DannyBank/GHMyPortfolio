@@ -189,6 +189,14 @@ async function namedStorePut(dbName, storeName, record) {
     r.onerror   = e => rej(e.target.error);
   });
 }
+async function namedStoreClear(dbName, storeName) {
+  const db = await openNamedDB(dbName);
+  return new Promise((res, rej) => {
+    const r = db.transaction(storeName, "readwrite").objectStore(storeName).clear();
+    r.onsuccess = () => res();
+    r.onerror = e => rej(e.target.error);
+  });
+}
 async function dbGetAll() {
   const db = await openDB();
   return new Promise((res, rej) => { const r = db.transaction(STORE,"readonly").objectStore(STORE).getAll(); r.onsuccess=e=>res(e.target.result); r.onerror=e=>rej(e.target.error); });
@@ -819,6 +827,13 @@ async function restoreFullBackup(file) {
 
   for (const p of data.portfolios) {
     const dbName = dbNameFor(p.id);
+    // A restore replaces a portfolio rather than merging it with old records.
+    await Promise.all([
+      namedStoreClear(dbName, STORE),
+      namedStoreClear(dbName, STORE_TB),
+      namedStoreClear(dbName, STORE_MF),
+      namedStoreClear(dbName, STORE_GOALS),
+    ]);
     for (const rec of p.stocks || [])      await namedStorePut(dbName, STORE,        rec);
     for (const rec of p.tbills || [])      await namedStorePut(dbName, STORE_TB,     rec);
     for (const rec of p.mutualfunds || []) await namedStorePut(dbName, STORE_MF,     rec);
@@ -4764,8 +4779,8 @@ export default function App() {
               <button className="eye-btn" onClick={() => setHidden(h => !h)} title={hidden ? "Show amounts" : "Hide amounts"}>
                 {hidden ? <EyeOffIcon /> : <EyeIcon />}
               </button>
-              {stocks.length > 0 && (
-                <button className="export-header-btn" onClick={() => { setExportOpen(true); setConfirmClear(false); }}>Export ↗</button>
+              {dbReady && (
+                <button className="export-header-btn" onClick={() => { setExportOpen(true); setConfirmClear(false); }}>Backup</button>
               )}
             </div>
           </div>
@@ -5085,7 +5100,7 @@ export default function App() {
       {exportOpen && (
         <div className="bottom-sheet">
           <div style={{ ...S.row, marginBottom: "var(--gap-md)" }}>
-            <div className="sheet-title" style={{ margin: 0 }}>Data & Export</div>
+            <div className="sheet-title" style={{ margin: 0 }}>Back up & restore</div>
             <button onClick={() => { setExportOpen(false); setConfirmClear(false); }}
               style={{ background: "none", border: "none", color: "var(--clr-dim)", fontSize: "var(--fs-xl)", cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
           </div>
@@ -5103,15 +5118,15 @@ export default function App() {
               </button>
               <button style={{ ...S.exportBtn, background: "rgba(45,127,249,.1)", color: "var(--clr-accent)", border: "1px solid rgba(45,127,249,.3)" }}
                 onClick={() => fullBackupImportRef.current.click()} disabled={loading}>
-                📲 Restore Full Backup
+                📲 Restore app backup
               </button>
             </div>
           )}
-          <div className="sheet-hint">Everything, in one file: every portfolio you have, all stocks, T-Bills, mutual funds, and goals — plus pinned reference prices and AI insights. Save this before reinstalling or switching devices, then restore it afterwards to get back to exactly where you were.</div>
+          <div className="sheet-hint">Use Restore app backup to load a GHMyPortfolio Full Backup file. It replaces this device's app data with every portfolio, holding, T-Bill, mutual fund, goal, and saved setting from that backup.</div>
 
           <div style={{ ...S.divider, margin: "clamp(14px,3.5vw,20px) 0 clamp(10px,2.8vw,16px)" }} />
 
-          <div style={S.label}>Export portfolio</div>
+          <div style={S.label}>Single portfolio backup</div>
           <div className="export-row">
             <button style={S.exportBtn} onClick={() => { exportCSV(portfolio); setExportOpen(false); }}>📊 CSV (spreadsheet)</button>
             <button style={S.exportBtn} onClick={() => { exportJSON(portfolio); setExportOpen(false); }}>💾 JSON (backup)</button>
@@ -5135,9 +5150,9 @@ export default function App() {
 
           <div style={{ ...S.divider, margin: "clamp(14px,3.5vw,20px) 0 clamp(10px,2.8vw,16px)" }} />
 
-          <div style={S.label}>Restore from backup</div>
-          <button style={{ ...S.ghostBtn, marginTop: 4 }} onClick={() => importRef.current.click()}>⬆ Import JSON Backup</button>
-          <div className="sheet-hint">Replaces your current portfolio with data from a JSON backup file.</div>
+          <div style={S.label}>Restore single portfolio</div>
+          <button style={{ ...S.ghostBtn, marginTop: 4 }} onClick={() => importRef.current.click()}>⬆ Restore JSON portfolio backup</button>
+          <div className="sheet-hint">Choose a JSON backup exported by this app. It replaces only the currently open portfolio.</div>
 
           <div style={{ ...S.divider, margin: "clamp(14px,3.5vw,20px) 0 clamp(10px,2.8vw,16px)" }} />
 
