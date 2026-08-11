@@ -941,7 +941,7 @@ const GLOBAL_CSS = `
   /* ── Top border for the holdings list ── */
   .holdings-list {
     border-top: 1px solid var(--clr-border);
-    width: 98vw;
+    width: 100%;
     max-width: 640px;
   }
 
@@ -1091,7 +1091,7 @@ const GLOBAL_CSS = `
     padding: clamp(11px,3vw,14px) var(--gutter,18px);
     border-bottom: 1px solid var(--clr-border);
     background: var(--clr-card);
-    width: 98vw;
+    width: 100%;
     max-width: 640px;
   }
   .market-row:first-child { border-top: 1px solid var(--clr-border); }
@@ -1179,7 +1179,7 @@ const GLOBAL_CSS = `
     border-bottom: 1px solid var(--clr-border);
     padding: clamp(14px,3.5vw,18px) var(--gutter,18px);
     cursor: default;
-    width: 98vw;
+    width: 100%;
     max-width: 640px;
   }
   .inv-card-title { font-weight: 700; font-size: var(--fs-lg); }
@@ -1192,7 +1192,7 @@ const GLOBAL_CSS = `
     border-top: 1px solid var(--clr-border);
     border-bottom: 1px solid var(--clr-border);
     background: var(--clr-card);
-    width: 98vw;
+    width: 100%;
     max-width: 640px;
   }
   .inv-stat {
@@ -1211,7 +1211,7 @@ const GLOBAL_CSS = `
     grid-template-columns: 1fr 1fr;
     gap: clamp(8px,2vw,12px);
     padding: clamp(10px,2.5vw,14px) var(--gutter,18px);
-    width: 98vw;
+    width: 100%;
     max-width: 640px;
   }
   .summary-tile {
@@ -1232,7 +1232,7 @@ const GLOBAL_CSS = `
     padding: clamp(10px,2.8vw,13px) var(--gutter,18px);
     border-bottom: 1px solid var(--clr-border);
     background: var(--clr-card);
-    width: 98vw;
+    width: 100%;
     max-width: 640px;
   }
   .mf-entry-row:first-child { border-top: 1px solid var(--clr-border); }
@@ -1250,7 +1250,7 @@ const GLOBAL_CSS = `
     display: flex; justify-content: space-between; align-items: center;
     padding: clamp(10px,2.8vw,14px) var(--gutter,18px);
     border-bottom: 1px solid var(--clr-border);
-    width: 98vw; max-width: 640px;
+    width: 100%; max-width: 640px;
     background: var(--clr-card);
   }
   .analysis-metric:first-child { border-top: 1px solid var(--clr-border); }
@@ -1260,7 +1260,7 @@ const GLOBAL_CSS = `
     display: flex; justify-content: space-between; align-items: center;
     padding: clamp(9px,2.5vw,12px) var(--gutter,18px);
     border-bottom: 1px solid var(--clr-border);
-    width: 98vw; max-width: 640px;
+    width: 100%; max-width: 640px;
   }
   .fib-row:first-child { border-top: 1px solid var(--clr-border); }
   .insight-card {
@@ -1268,7 +1268,7 @@ const GLOBAL_CSS = `
     padding: clamp(12px,3vw,16px) var(--gutter,18px);
     border-bottom: 1px solid var(--clr-border);
     background: var(--clr-card);
-    width: 98vw; max-width: 640px;
+    width: 100%; max-width: 640px;
   }
   .insight-title { font-weight: 700; font-size: var(--fs-md); margin-bottom: 4px; }
   .insight-body  { font-size: var(--fs-base); color: var(--clr-dim); line-height: 1.65; }
@@ -1285,6 +1285,36 @@ const GLOBAL_CSS = `
     to   { opacity: 1; transform: translateY(0); }
   }
   .page-root { animation: pageEnter 0.32s cubic-bezier(0.16, 1, 0.3, 1); }
+
+  /* Mobile dashboard polish for the launch screen. */
+  .portfolio-home { overflow-x: clip; }
+  .sticky-panel.portfolio-home {
+    padding-top: env(safe-area-inset-top, 0px);
+    background: color-mix(in srgb, var(--clr-bg) 92%, transparent);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+  .sticky-panel.portfolio-home > div:first-child { padding: 16px var(--gutter) 6px !important; }
+  .dashboard-carousel { margin-top: 10px !important; margin-bottom: 10px !important; }
+  .quick-actions { padding-bottom: 12px !important; }
+  .holding-card {
+    margin: 0 var(--gutter) 10px !important;
+    width: calc(100% - (var(--gutter) * 2));
+    border: 1px solid var(--clr-border) !important;
+    border-radius: 16px !important;
+    padding: 14px !important;
+    box-shadow: 0 6px 18px rgba(0,0,0,.10);
+  }
+  .sticky-panel.portfolio-home + .holdings-list .section-label { padding-top: 14px; padding-bottom: 8px; }
+  .bottom-nav {
+    border: 1px solid var(--clr-border);
+    border-bottom: 0;
+    border-radius: 20px 20px 0 0;
+  }
+  @media (max-width: 380px) {
+    .sticky-panel.portfolio-home > div:first-child { padding-top: 12px !important; }
+    .holding-card { padding: 12px !important; }
+  }
   @media (prefers-reduced-motion: reduce) {
     .page-root { animation: none !important; }
   }
@@ -1293,7 +1323,7 @@ const GLOBAL_CSS = `
 // ─── Styles object (layout + component tokens — all colours via CSS vars) ─────
 const S = {
   root   : { minHeight: "100dvh", background: "var(--clr-bg)", color: "var(--clr-text)", fontFamily: "'Brighter Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "clamp(90px,18vw,120px)" },
-  header : { padding: "clamp(28px,8vw,52px) var(--gutter,18px) 8px" },
+  header : { padding: "calc(env(safe-area-inset-top, 0px) + clamp(14px,4vw,20px)) var(--gutter,18px) 8px" },
   hero   : { margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", background: "var(--clr-hero-grad)", padding: "clamp(16px,4vw,24px) var(--gutter,18px)", border: "1px solid var(--clr-border)" },
   label  : { fontSize: "var(--fs-xs)", letterSpacing: 2.2, color: "var(--clr-dim)", textTransform: "uppercase", marginBottom: 3 },
   bigNum : { fontSize: "var(--fs-3xl)", fontWeight: 800, letterSpacing: -1, lineHeight: 1.1 },
@@ -4714,7 +4744,7 @@ export default function App() {
     <div className="page-root" style={S.root}>
 
       {/* ══ STICKY PANEL: header + hero + action buttons ══ */}
-      <div className="sticky-panel">
+      <div className="sticky-panel portfolio-home">
 
         {/* Header */}
         <div style={S.header}>
@@ -4754,7 +4784,7 @@ export default function App() {
           // Card style: same as S.hero but margin moved to the outer wrapper
           const cardStyle = { ...S.hero, margin: 0, flexShrink: 0, width: "100%", boxSizing: "border-box" };
           return (
-            <div style={{ margin: "clamp(8px,2vw,14px) var(--gutter,18px)", touchAction: "pan-y" }}
+            <div className="dashboard-carousel" style={{ margin: "clamp(8px,2vw,14px) var(--gutter,18px)", touchAction: "pan-y" }}
               onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
 
               {/* Slide track — clips to the wrapper width */}
@@ -4814,7 +4844,7 @@ export default function App() {
         })()}
 
         {/* Action buttons */}
-        <div style={{ padding: "0 var(--gutter,18px) var(--gap-md,12px)" }}>
+        <div className="quick-actions" style={{ padding: "0 var(--gutter,18px) var(--gap-md,12px)" }}>
 		  <input ref={fileRef} type="file" accept={(STATEMENT_SOURCES.find(s => s.id === importSource) || STATEMENT_SOURCES[0]).accept} style={{ display: "none" }} onChange={handleFile} />
 		  <input ref={importRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
 		  <input ref={backupImportRef} type="file" accept=".txt" style={{ display: "none" }} onChange={handleBackupImport} />
@@ -4868,7 +4898,7 @@ export default function App() {
         const yearPct = s.currentPrice !== null && s.avgCost ? ((s.currentPrice - s.avgCost) / s.avgCost) * 100 : null;
 
         return (
-          <div key={s.symbol} style={S.card} onClick={() => { setSelected(s.symbol); setScreen("detail"); }}>
+          <div key={s.symbol} className="holding-card" style={S.card} onClick={() => { setSelected(s.symbol); setScreen("detail"); }}>
             <div style={S.row}>
               <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-md)" }}>
                 <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
