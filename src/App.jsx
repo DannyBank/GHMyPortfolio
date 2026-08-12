@@ -1323,6 +1323,32 @@ const GLOBAL_CSS = `
   .dashboard-carousel > div:first-child > div > div {
     padding: 12px 14px !important;
   }
+  .dashboard-carousel > div:first-child > div > div:first-child {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    column-gap: 14px;
+    align-items: center;
+  }
+  .dashboard-carousel > div:first-child > div > div:first-child > :nth-child(1) { grid-column: 1; grid-row: 1; }
+  .dashboard-carousel > div:first-child > div > div:first-child > :nth-child(2) { grid-column: 1; grid-row: 2; }
+  .dashboard-carousel > div:first-child > div > div:first-child > :nth-child(3) {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex !important;
+    flex-direction: column;
+    gap: 7px !important;
+    margin-top: 0 !important;
+  }
+  .dashboard-carousel > div:first-child > div > div:first-child > :nth-child(3)::after {
+    content: "Total Charges\A" var(--total-charges);
+    white-space: pre-line;
+    color: var(--clr-gold);
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    line-height: 1.55;
+    letter-spacing: .3px;
+  }
   .dashboard-carousel > div:last-child { padding-top: 4px !important; }
   .dashboard-carousel > div:first-child > div > div > div:last-child { display: none; }
   .quick-actions { padding-bottom: 8px !important; }
@@ -1339,6 +1365,16 @@ const GLOBAL_CSS = `
     border-radius: 16px !important;
     padding: 14px !important;
     box-shadow: 0 6px 18px rgba(0,0,0,.10);
+  }
+  .holding-card::after {
+    content: "Total charges: " var(--stock-charges);
+    display: block;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--clr-border);
+    color: var(--clr-gold);
+    font-size: var(--fs-xs);
+    font-weight: 700;
   }
   .sticky-panel.portfolio-home + .holdings-list .section-label { padding-top: 14px; padding-bottom: 8px; }
   .bottom-nav {
@@ -4328,6 +4364,7 @@ export default function App() {
   const totalPnlPct   = totalInvested ? (totalPnl / totalInvested) * 100 : 0;
   const totalDayPnl   = stocks.reduce((s, x) => x.currentPrice !== null && x.prevPrice !== null ? s + (x.currentPrice - x.prevPrice) * x.totalShares : s, 0);
   const totalDayPct   = (totalValue - totalDayPnl) ? (totalDayPnl / (totalValue - totalDayPnl)) * 100 : 0;
+  const totalCharges  = stocks.reduce((sum, stock) => sum + (stock.trades || []).reduce((fees, trade) => fees + (Number(trade.charges) || 0), 0), 0);
 
   // Statement card totals — only stocks with avgCostLocked (sourced from PDF page 1 table)
   const stmtStocks      = stocks.filter(x => x.avgCostLocked);
@@ -4827,7 +4864,7 @@ export default function App() {
                 <div style={{ display: "flex", width: "100%", transition: "transform .3s cubic-bezier(.4,0,.2,1)", transform: `translateX(${heroCard === 0 ? "0%" : "-100%"})`, willChange: "transform" }}>
 
                   {/* Card 0 — Live totals */}
-                  <div style={cardStyle}>
+                  <div style={{ ...cardStyle, "--total-charges": hidden ? '"Hidden"' : `"GHS ${totalCharges.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}"` }}>
                     <div style={S.label}>Total Value</div>
                     <div style={S.bigNum}>{hidden ? "••••••" : `GHS ${totalValue.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
                     <div style={{ display: "flex", gap: "clamp(16px,4vw,28px)", marginTop: "clamp(10px,2.8vw,16px)" }}>
@@ -4931,9 +4968,10 @@ export default function App() {
         const dayPnl  = s.currentPrice !== null && s.prevPrice !== null ? (s.currentPrice - s.prevPrice) * s.totalShares : null;
         const dayPct  = dayPnl !== null && s.prevPrice ? ((s.currentPrice - s.prevPrice) / s.prevPrice) * 100 : null;
         const yearPct = s.currentPrice !== null && s.avgCost ? ((s.currentPrice - s.avgCost) / s.avgCost) * 100 : null;
+        const stockCharges = (s.trades || []).reduce((sum, trade) => sum + (Number(trade.charges) || 0), 0);
 
         return (
-          <div key={s.symbol} className="holding-card" style={S.card} onClick={() => { setSelected(s.symbol); setScreen("detail"); }}>
+          <div key={s.symbol} className="holding-card" style={{ ...S.card, "--stock-charges": hidden ? '"Hidden"' : `"GHS ${stockCharges.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}"` }} onClick={() => { setSelected(s.symbol); setScreen("detail"); }}>
             <div style={S.row}>
               <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-md)" }}>
                 <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
