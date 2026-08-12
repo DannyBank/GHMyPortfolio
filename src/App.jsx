@@ -1304,14 +1304,34 @@ const GLOBAL_CSS = `
   /* Mobile dashboard polish for the launch screen. */
   .portfolio-home { overflow-x: clip; }
   .sticky-panel.portfolio-home {
+    position: relative;
+    top: auto;
+    box-shadow: none;
     padding-top: env(safe-area-inset-top, 0px);
     background: color-mix(in srgb, var(--clr-bg) 92%, transparent);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
   }
-  .sticky-panel.portfolio-home > div:first-child { padding: 16px var(--gutter) 6px !important; }
-  .dashboard-carousel { margin-top: 10px !important; margin-bottom: 10px !important; }
-  .quick-actions { padding-bottom: 12px !important; }
+  .sticky-panel.portfolio-home > div:first-child { padding: 12px var(--gutter) 4px !important; }
+  .dashboard-carousel {
+    --fs-3xl: clamp(22px, 6vw, 28px);
+    --fs-xl: clamp(14px, 3.8vw, 17px);
+    --fs-xs: 10px;
+    margin-top: 6px !important;
+    margin-bottom: 6px !important;
+  }
+  .dashboard-carousel > div:first-child > div > div {
+    padding: 12px 14px !important;
+  }
+  .dashboard-carousel > div:last-child { padding-top: 4px !important; }
+  .dashboard-carousel > div:first-child > div > div > div:last-child { display: none; }
+  .quick-actions { padding-bottom: 8px !important; }
+  .quick-actions > div { gap: 8px !important; }
+  .quick-actions button {
+    min-height: 38px;
+    padding: 9px 10px !important;
+    font-size: var(--fs-base) !important;
+  }
   .holding-card {
     margin: 0 var(--gutter) 10px !important;
     width: calc(100% - (var(--gutter) * 2));
@@ -1327,7 +1347,7 @@ const GLOBAL_CSS = `
     border-radius: 20px 20px 0 0;
   }
   @media (max-width: 380px) {
-    .sticky-panel.portfolio-home > div:first-child { padding-top: 12px !important; }
+    .sticky-panel.portfolio-home > div:first-child { padding-top: 10px !important; }
     .holding-card { padding: 12px !important; }
   }
   @media (prefers-reduced-motion: reduce) {
