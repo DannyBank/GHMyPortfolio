@@ -4977,10 +4977,9 @@ export default function App() {
                 <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: "var(--fs-lg)" }}>{s.symbol}</div>
-                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>{s.totalShares.toLocaleString()} shares</div>
-                  {s.currentPrice !== null && (
-                    <div className="card-price">GHS {s.currentPrice} / share</div>
-                  )}
+                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)" }}>
+                    {s.totalShares.toLocaleString()} shares{s.currentPrice !== null ? ` @ GHS ${s.currentPrice}` : ""}
+                  </div>
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
