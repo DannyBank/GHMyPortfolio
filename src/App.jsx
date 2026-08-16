@@ -58,25 +58,25 @@ const THEME_CSS = `
 
   /* ── Light theme ── */
   body.light {
-    --clr-green       : #00963e;
-    --clr-red         : #d4000f;
-    --clr-dim         : #6b7c96;
-    --clr-bg          : #f0f4f8;
+    --clr-green       : #0b9b5a;
+    --clr-red         : #d94a56;
+    --clr-dim         : #71809a;
+    --clr-bg          : #f7f7ff;
     --clr-card        : #ffffff;
-    --clr-card-alt    : #f7fafc;
-    --clr-border      : #d1dae6;
-    --clr-text        : #0f1923;
-    --clr-accent      : #1a5fd4;
-    --clr-gold        : #b8620a;
-    --clr-avatar-bg   : #e4ecf6;
-    --clr-input-bg    : #eef2f7;
-    --clr-hero-grad   : linear-gradient(135deg,#ddeeff,#c8dcf5);
-    --clr-live-grad   : linear-gradient(135deg,#e6f9ee,#d0f0dc);
-    --clr-export-grad : linear-gradient(135deg,#fff8e6,#fef0c8);
+    --clr-card-alt    : #ffffff;
+    --clr-border      : #e7e8f3;
+    --clr-text        : #17223b;
+    --clr-accent      : #3f27d6;
+    --clr-gold        : #a76511;
+    --clr-avatar-bg   : #eeeaff;
+    --clr-input-bg    : #f4f4fb;
+    --clr-hero-grad   : linear-gradient(135deg,#4828d7 0%,#1b65ed 56%,#19b9db 100%);
+    --clr-live-grad   : linear-gradient(135deg,#e8fbf2,#d6f6e6);
+    --clr-export-grad : linear-gradient(135deg,#fff8e9,#fff1cf);
     --clr-notice-bg   : rgba(0,0,0,.03);
     --clr-shadow      : rgba(0,0,0,.12);
     --clr-sheet-shadow: rgba(0,0,0,.18);
-    --clr-fab-shadow  : rgba(26,95,212,.3);
+    --clr-fab-shadow  : rgba(63,39,214,.32);
   }
 `;
 
@@ -1308,7 +1308,7 @@ const GLOBAL_CSS = `
     top: auto;
     box-shadow: none;
     padding-top: env(safe-area-inset-top, 0px);
-    background: color-mix(in srgb, var(--clr-bg) 92%, transparent);
+    background: color-mix(in srgb, var(--clr-bg) 96%, transparent);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
   }
@@ -1321,13 +1321,13 @@ const GLOBAL_CSS = `
     margin-bottom: 6px !important;
   }
   .dashboard-carousel > div:first-child > div > div {
-    padding: 12px 14px !important;
+    padding: 20px 22px !important;
   }
   .dashboard-carousel > div:first-child > div > div:first-child {
     display: grid !important;
     grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
     grid-template-rows: auto 1fr;
-    column-gap: 14px;
+    column-gap: 18px;
     align-items: center;
   }
   .dashboard-carousel > div:first-child > div > div:first-child > :nth-child(1) { grid-column: 1; grid-row: 1; }
@@ -1354,17 +1354,17 @@ const GLOBAL_CSS = `
   .quick-actions { padding-bottom: 8px !important; }
   .quick-actions > div { gap: 8px !important; }
   .quick-actions button {
-    min-height: 38px;
-    padding: 9px 10px !important;
+    min-height: 54px;
+    padding: 12px 10px !important;
     font-size: var(--fs-base) !important;
   }
   .holding-card {
     margin: 0 var(--gutter) 10px !important;
     width: calc(100% - (var(--gutter) * 2));
     border: 1px solid var(--clr-border) !important;
-    border-radius: 16px !important;
-    padding: 14px !important;
-    box-shadow: 0 6px 18px rgba(0,0,0,.10);
+    border-radius: 18px !important;
+    padding: 16px !important;
+    box-shadow: 0 8px 24px rgba(42,35,105,.07);
   }
   .holding-card::after {
     content: "Total charges: " var(--stock-charges);
@@ -1380,8 +1380,32 @@ const GLOBAL_CSS = `
   .bottom-nav {
     border: 1px solid var(--clr-border);
     border-bottom: 0;
-    border-radius: 20px 20px 0 0;
+    border-radius: 24px 24px 0 0;
+    box-shadow: 0 -6px 22px rgba(42,35,105,.08);
   }
+  body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child {
+    min-height: 194px;
+    border: 0 !important;
+    box-shadow: 0 16px 30px rgba(47,81,207,.23);
+    color: #fff;
+  }
+  body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child [style*="--clr-dim"] {
+    color: rgba(255,255,255,.72) !important;
+  }
+  body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child [style*="var(--clr-green)"],
+  body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child [style*="var(--clr-red)"] {
+    color: #fff !important;
+  }
+  body.light .quick-actions button:first-child {
+    background: #fff !important;
+    border: 0 !important;
+    border-radius: 17px !important;
+    box-shadow: 0 5px 14px rgba(42,35,105,.08);
+  }
+  body.light .quick-actions button:last-child { border-radius: 17px !important; }
+  body.light .section-label { background: transparent; color: #42537a; }
+  body.light .nav-item.active { color: #3f27d6; }
+  body.light .nav-item.active svg { filter: drop-shadow(0 4px 5px rgba(63,39,214,.2)); }
   @media (max-width: 380px) {
     .sticky-panel.portfolio-home > div:first-child { padding-top: 10px !important; }
     .holding-card { padding: 12px !important; }
@@ -3893,7 +3917,7 @@ export default function App() {
   const [hidden,         setHidden]         = useState(true);
   const [liveSnapshot,   setLiveSnapshot]   = useState(null);
   const [showMarket,     setShowMarket]     = useState(false);
-  const [lightTheme,     setLightTheme]     = useState(false);
+  const [lightTheme,     setLightTheme]     = useState(true);
   const [navTab,         setNavTab]         = useState("stocks"); // stocks | tbills | mutualfunds | summary
   // T-Bills
   const [tbills,         setTbills]         = useState([]);
