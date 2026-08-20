@@ -1163,18 +1163,19 @@ const GLOBAL_CSS = `
   .nav-item {
     flex: 1;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: clamp(8px,2vw,12px) 4px;
-    gap: 3px;
+    padding: 14px 4px 12px;
+    min-height: 68px;
+    gap: 4px;
     background: none; border: none;
     color: var(--clr-dim);
     font-family: 'Brighter Sans', sans-serif;
-    font-size: var(--fs-xs);
+    font-size: 11px;
     cursor: pointer;
     transition: color 0.15s;
     letter-spacing: 0.5px;
   }
   .nav-item.active { color: var(--clr-accent); }
-  .nav-item svg { width: 20px; height: 20px; }
+  .nav-item svg { width: 24px; height: 24px; }
 
   /* ── Page wrapper with nav padding ── */
   .page-root {
@@ -1184,7 +1185,7 @@ const GLOBAL_CSS = `
     font-family: 'Brighter Sans', sans-serif;
     width: 100%; max-width: 640px;
     margin: 0 auto;
-    padding-bottom: clamp(80px,16vw,110px);
+    padding-bottom: calc(clamp(96px, 20vw, 132px) + env(safe-area-inset-bottom, 0px));
   }
 
   /* ── Investment card (T-Bills / Mutual Funds) ── */
@@ -1313,6 +1314,31 @@ const GLOBAL_CSS = `
     -webkit-backdrop-filter: blur(16px);
   }
   .sticky-panel.portfolio-home > div:first-child { padding: 12px var(--gutter) 4px !important; }
+  .home-welcome {
+    font-size: var(--fs-lg);
+    font-weight: 700;
+    letter-spacing: -0.2px;
+    margin-bottom: 8px;
+  }
+  .home-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .home-header-row .portfolio-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .home-header-actions {
+    display: flex;
+    gap: var(--gap-sm);
+    align-items: center;
+    flex-shrink: 0;
+  }
   .dashboard-carousel {
     --fs-3xl: clamp(22px, 6vw, 28px);
     --fs-xl: clamp(14px, 3.8vw, 17px);
@@ -1326,7 +1352,7 @@ const GLOBAL_CSS = `
   .dashboard-carousel > div:first-child > div > div:first-child {
     display: grid !important;
     grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto 1fr auto;
     column-gap: 18px;
     align-items: center;
   }
@@ -1349,14 +1375,20 @@ const GLOBAL_CSS = `
     line-height: 1.55;
     letter-spacing: .3px;
   }
+  .dashboard-carousel > div:first-child > div > div:first-child > .hero-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin-top: 14px;
+    width: 100%;
+  }
   .dashboard-carousel > div:last-child { padding-top: 4px !important; }
-  .dashboard-carousel > div:first-child > div > div > div:last-child { display: none; }
-  .quick-actions { padding-bottom: 8px !important; }
-  .quick-actions > div { gap: 8px !important; }
-  .quick-actions button {
-    min-height: 54px;
-    padding: 12px 10px !important;
-    font-size: var(--fs-base) !important;
+  .hero-hint { display: none; }
+  .hero-actions > div { display: flex; gap: 8px; }
+  .hero-actions button {
+    min-height: 44px;
+    padding: 10px 10px !important;
+    font-size: var(--fs-sm) !important;
+    flex: 1;
   }
   .holding-card {
     margin: 0 var(--gutter) 10px !important;
@@ -1366,25 +1398,16 @@ const GLOBAL_CSS = `
     padding: 16px !important;
     box-shadow: 0 8px 24px rgba(42,35,105,.07);
   }
-  .holding-card::after {
-    content: "Total charges: " var(--stock-charges);
-    display: block;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px solid var(--clr-border);
-    color: var(--clr-gold);
-    font-size: var(--fs-xs);
-    font-weight: 700;
-  }
   .sticky-panel.portfolio-home + .holdings-list .section-label { padding-top: 14px; padding-bottom: 8px; }
   .bottom-nav {
+    min-height: calc(68px + env(safe-area-inset-bottom, 0px));
     border: 1px solid var(--clr-border);
     border-bottom: 0;
     border-radius: 24px 24px 0 0;
     box-shadow: 0 -6px 22px rgba(42,35,105,.08);
   }
   body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child {
-    min-height: 194px;
+    min-height: 248px;
     border: 0 !important;
     box-shadow: 0 16px 30px rgba(47,81,207,.23);
     color: #fff;
@@ -1392,17 +1415,18 @@ const GLOBAL_CSS = `
   body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child [style*="--clr-dim"] {
     color: rgba(255,255,255,.72) !important;
   }
-  body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child [style*="var(--clr-green)"],
-  body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child [style*="var(--clr-red)"] {
+  body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child [style*="var(--clr-green)"]:not(button),
+  body.light .portfolio-home .dashboard-carousel > div:first-child > div > div:first-child [style*="var(--clr-red)"]:not(button) {
     color: #fff !important;
   }
-  body.light .quick-actions button:first-child {
-    background: #fff !important;
-    border: 0 !important;
+  body.light .hero-actions button:first-child {
+    background: rgba(255,255,255,.16) !important;
+    border: 1px solid rgba(255,255,255,.28) !important;
+    color: #fff !important;
     border-radius: 17px !important;
     box-shadow: 0 5px 14px rgba(42,35,105,.08);
   }
-  body.light .quick-actions button:last-child { border-radius: 17px !important; }
+  body.light .hero-actions button:last-child { border-radius: 17px !important; }
   body.light .section-label { background: transparent; color: #42537a; }
   body.light .nav-item.active { color: #3f27d6; }
   body.light .nav-item.active svg { filter: drop-shadow(0 4px 5px rgba(63,39,214,.2)); }
@@ -1417,7 +1441,7 @@ const GLOBAL_CSS = `
 
 // ─── Styles object (layout + component tokens — all colours via CSS vars) ─────
 const S = {
-  root   : { minHeight: "100dvh", background: "var(--clr-bg)", color: "var(--clr-text)", fontFamily: "'Brighter Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "clamp(90px,18vw,120px)" },
+  root   : { minHeight: "100dvh", background: "var(--clr-bg)", color: "var(--clr-text)", fontFamily: "'Brighter Sans', sans-serif", width: "100%", maxWidth: 640, margin: "0 auto", paddingBottom: "calc(clamp(96px,20vw,132px) + env(safe-area-inset-bottom, 0px))" },
   header : { padding: "calc(env(safe-area-inset-top, 0px) + clamp(14px,4vw,20px)) var(--gutter,18px) 8px" },
   hero   : { margin: "clamp(8px,2vw,14px) var(--gutter,18px)", borderRadius: "var(--radius-card)", background: "var(--clr-hero-grad)", padding: "clamp(16px,4vw,24px) var(--gutter,18px)", border: "1px solid var(--clr-border)" },
   label  : { fontSize: "var(--fs-xs)", letterSpacing: 2.2, color: "var(--clr-dim)", textTransform: "uppercase", marginBottom: 3 },
@@ -4551,6 +4575,7 @@ export default function App() {
             ["Current Price",    hidden ? "••••" : (s.currentPrice !== null ? `GHS ${s.currentPrice}` : "—")],
             ["Prev Close",       hidden ? "••••" : (s.prevPrice    !== null ? `GHS ${s.prevPrice}`    : "—")],
             ["Total Invested",   hidden ? "••••••" : `GHS ${s.totalCost.toLocaleString("en-GH", { minimumFractionDigits: 2 })}`],
+            ["Total Charges",    hidden ? "••••" : `GHS ${(s.trades || []).reduce((sum, trade) => sum + (Number(trade.charges) || 0), 0).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`],
           ].map(([k, v]) => (
             <div key={k} className="stat-row">
               <span className="stat-label">{k}</span>
@@ -4844,15 +4869,13 @@ export default function App() {
 
         {/* Header */}
         <div style={S.header}>
-          <div style={{ ...S.row, alignItems: "flex-start" }}>
-            <div onClick={() => setPortfolioSheetOpen(true)} style={{ cursor: "pointer" }}>
-              <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", letterSpacing: 3, textTransform: "uppercase" }}>IC Securities · GSE</div>
-              <div style={{ fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                {portfolios.find(p => p.id === activePortfolioId)?.name || "My Portfolio"}
-                <span style={{ fontSize: "var(--fs-md)", color: "var(--clr-dim)" }}>▾</span>
-              </div>
+          <div className="home-welcome">Welcome Daniel</div>
+          <div className="home-header-row">
+            <div onClick={() => setPortfolioSheetOpen(true)} className="portfolio-name" style={{ cursor: "pointer", fontSize: "var(--fs-2xl)", fontWeight: 800, letterSpacing: -0.5, display: "flex", alignItems: "center", gap: 6 }}>
+              {portfolios.find(p => p.id === activePortfolioId)?.name || "My Portfolio"}
+              <span style={{ fontSize: "var(--fs-md)", color: "var(--clr-dim)", flexShrink: 0 }}>▾</span>
             </div>
-            <div style={{ display: "flex", gap: "var(--gap-sm)", alignItems: "center", paddingTop: "clamp(4px,1.5vw,8px)" }}>
+            <div className="home-header-actions">
               {dbReady && <div style={S.dbTag}>💾 Saved</div>}
               <button className="theme-btn" onClick={() => setLightTheme(t => !t)} title={lightTheme ? "Switch to dark" : "Switch to light"}>
                 {lightTheme ? "🌙" : "☀️"}
@@ -4901,7 +4924,26 @@ export default function App() {
                         <div style={{ color: hidden ? "var(--clr-dim)" : col(totalDayPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(totalDayPct) : fmtGHS(totalDayPnl))}</div>
                       </div>
                     </div>
-                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>Tap figures to toggle GHS ↔ % · swipe for statement view</div>
+                    <div className="hero-hint" style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>Tap figures to toggle GHS ↔ % · swipe for statement view</div>
+                    <div className="hero-actions" onClick={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}>
+                      <div>
+                        <button style={{ ...S.ghostBtn, width: "auto", flex: 1, marginTop: 0 }} onClick={() => setSourceSheetOpen(true)} disabled={loading}>
+                          {loading ? <><Spinner />{loadMsg}</> : "⬆ Import Statement"}
+                        </button>
+                        {stocks.length > 0 && (
+                          <button style={{ ...(fetchingPrices ? S.liveBtnDis : S.liveBtn), width: "auto", flex: 1, marginTop: 0 }} onClick={fetchLivePrices} disabled={fetchingPrices}>
+                            {fetchingPrices ? <><Spinner />Fetching…</> : <><span>⚡</span>Fetch Live Prices</>}
+                          </button>
+                        )}
+                      </div>
+                      {error && <div style={{ color: "var(--clr-red)", fontSize: "var(--fs-sm)", marginTop: "var(--gap-sm)" }}>{error}</div>}
+                      {stocks.length > 0 && lastUpdated && !fetchingPrices && (
+                        <div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: "var(--gap-sm)", textAlign: "center" }}>
+                          Last updated {lastUpdated.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      )}
+                      {stocks.length > 0 && fetchError && <div className="notice-box">{fetchError}</div>}
+                    </div>
                   </div>
 
                   {/* Card 1 — Statement view */}
@@ -4922,7 +4964,7 @@ export default function App() {
                             <div style={{ color: hidden ? "var(--clr-dim)" : col(stmtPnl), fontWeight: 700, fontSize: "var(--fs-xl)" }}>{hidden ? "••••" : (showPct ? fmtPct(stmtPnlPct) : fmtGHS(stmtPnl))}</div>
                           </div>
                         </div>
-                        <div style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>{stmtStocks.length} stock{stmtStocks.length !== 1 ? "s" : ""} from statement · tap P&L to toggle %</div>
+                        <div className="hero-hint" style={{ fontSize: "var(--fs-xs)", color: "var(--clr-dim)", marginTop: "clamp(8px,2vw,12px)" }}>{stmtStocks.length} stock{stmtStocks.length !== 1 ? "s" : ""} from statement · tap P&L to toggle %</div>
                       </>
                     )}
                   </div>
@@ -4939,37 +4981,11 @@ export default function App() {
           );
         })()}
 
-        {/* Action buttons */}
-        <div className="quick-actions" style={{ padding: "0 var(--gutter,18px) var(--gap-md,12px)" }}>
+        <div className="quick-actions" style={{ display: "none" }}>
 		  <input ref={fileRef} type="file" accept={(STATEMENT_SOURCES.find(s => s.id === importSource) || STATEMENT_SOURCES[0]).accept} style={{ display: "none" }} onChange={handleFile} />
 		  <input ref={importRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleJSONImport} />
 		  <input ref={backupImportRef} type="file" accept=".txt" style={{ display: "none" }} onChange={handleBackupImport} />
 		  <input ref={fullBackupImportRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleFullBackupImport} />
-
-		  <div style={{ display: "flex", gap: "var(--gap-sm)" }}>
-			<button style={{ ...S.ghostBtn, width: "auto", flex: 1, marginTop: 0 }} onClick={() => setSourceSheetOpen(true)} disabled={loading}>
-			  {loading ? <><Spinner />{loadMsg}</> : "⬆ Import Statement"}
-			</button>
-
-			{stocks.length > 0 && (
-			  <button style={{ ...(fetchingPrices ? S.liveBtnDis : S.liveBtn), width: "auto", flex: 1, marginTop: 0 }} onClick={fetchLivePrices} disabled={fetchingPrices}>
-				{fetchingPrices ? <><Spinner />Fetching…</> : <><span>⚡</span>Fetch Live Prices</>}
-			  </button>
-			)}
-		  </div>
-
-		  {error && <div style={{ color: "var(--clr-red)", fontSize: "var(--fs-sm)", marginTop: "var(--gap-sm)" }}>{error}</div>}
-
-		  {stocks.length > 0 && (
-			<>
-			  {lastUpdated && !fetchingPrices && (
-				<div style={{ fontSize: "var(--fs-sm)", color: "var(--clr-dim)", marginTop: "var(--gap-sm)", textAlign: "center" }}>
-				  Last updated {lastUpdated.toLocaleTimeString("en-GH", { hour: "2-digit", minute: "2-digit" })}
-				</div>
-			  )}
-			  {fetchError && <div className="notice-box">{fetchError}</div>}
-			</>
-		  )}
 		</div>
 
       </div>{/* end sticky-panel */}
@@ -4989,13 +5005,9 @@ export default function App() {
         const curVal  = s.currentPrice !== null ? s.currentPrice * s.totalShares : null;
         const pnl     = curVal !== null ? curVal - s.totalCost : null;
         const pnlPct  = pnl !== null && s.totalCost ? (pnl / s.totalCost) * 100 : null;
-        const dayPnl  = s.currentPrice !== null && s.prevPrice !== null ? (s.currentPrice - s.prevPrice) * s.totalShares : null;
-        const dayPct  = dayPnl !== null && s.prevPrice ? ((s.currentPrice - s.prevPrice) / s.prevPrice) * 100 : null;
-        const yearPct = s.currentPrice !== null && s.avgCost ? ((s.currentPrice - s.avgCost) / s.avgCost) * 100 : null;
-        const stockCharges = (s.trades || []).reduce((sum, trade) => sum + (Number(trade.charges) || 0), 0);
 
         return (
-          <div key={s.symbol} className="holding-card" style={{ ...S.card, "--stock-charges": hidden ? '"Hidden"' : `"GHS ${stockCharges.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}"` }} onClick={() => { setSelected(s.symbol); setScreen("detail"); }}>
+          <div key={s.symbol} className="holding-card" style={S.card} onClick={() => { setSelected(s.symbol); setScreen("detail"); }}>
             <div style={S.row}>
               <div style={{ display: "flex", alignItems: "center", gap: "var(--gap-md)" }}>
                 <div style={S.avatar}>{s.symbol.slice(0, 4)}</div>
@@ -5015,28 +5027,6 @@ export default function App() {
                 )}
               </div>
             </div>
-
-            {(dayPct !== null || yearPct !== null) && (
-              <>
-                <div style={S.divider} />
-                <div className="card-badges">
-                  {dayPct !== null ? (
-                    <div className="badge-col">
-                      <span className="badge-micro">Day</span>
-                      <div style={{ ...S.changeBadge(dayPct), cursor: "pointer" }} onClick={e => { e.stopPropagation(); setShowPct(!showPct); }}>
-                        <Arrow value={dayPct} />{hidden ? "••••" : (showPct ? fmtPct(dayPct) : fmtGHS(dayPnl))}
-                      </div>
-                    </div>
-                  ) : <div />}
-                  {yearPct !== null ? (
-                    <div className="badge-col-right">
-                      <span className="badge-micro">Since Purchase</span>
-                      <div style={S.changeBadge(yearPct)}><Arrow value={yearPct} />{hidden ? "••••" : fmtPct(yearPct)}</div>
-                    </div>
-                  ) : <div />}
-                </div>
-              </>
-            )}
 
             {s.currentPrice === null && (
               <div onClick={e => { e.stopPropagation(); setEditingPrice(s.symbol); setPriceInput(""); setPrevInput(""); }}
